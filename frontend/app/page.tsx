@@ -5,19 +5,17 @@ import Link from "next/link";
 import JobList, { jobsPerPage, type Job, type JobCategory } from "./components/JobList";
 import { readAppliedJobs, saveAppliedJobs, subscribeToAppliedJobChanges } from "./applied-storage";
 
-type Role = "all" | JobCategory;
+type Role = JobCategory;
 type JobsResponse = { items: Job[]; page: number; page_size: number; total: number; total_pages: number };
 
 const filters: { key: Role; label: string }[] = [
-  { key: "all", label: "All" },
   { key: "sde", label: "SDE" },
   { key: "ai", label: "AI" },
-  { key: "other", label: "Other" },
 ];
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export default function Home() {
-  const [role, setRole] = useState<Role>("all");
+  const [role, setRole] = useState<Role>("sde");
   const [page, setPage] = useState(1);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [total, setTotal] = useState(0);
@@ -30,7 +28,7 @@ export default function Home() {
 
   const endpoint = useMemo(() => {
     const params = new URLSearchParams({ page: String(page), page_size: String(jobsPerPage) });
-    if (role !== "all") params.set("role_type", role);
+    params.set("role_type", role);
     return `${apiUrl}/api/jobs?${params.toString()}`;
   }, [page, role]);
 
@@ -40,7 +38,7 @@ export default function Home() {
       const queryPage = Number(params.get("page"));
       const queryRole = params.get("role_type");
       setPage(Number.isInteger(queryPage) && queryPage > 0 ? queryPage : 1);
-      setRole(queryRole === "sde" || queryRole === "ai" || queryRole === "other" ? queryRole : "all");
+      setRole(queryRole === "ai" ? "ai" : "sde");
     };
     syncFromUrl();
     setQueryReady(true);
@@ -83,8 +81,7 @@ export default function Home() {
   const updateQuery = (nextRole: Role, nextPage: number) => {
     const params = new URLSearchParams(window.location.search);
     params.set("page", String(nextPage));
-    if (nextRole === "all") params.delete("role_type");
-    else params.set("role_type", nextRole);
+    params.set("role_type", nextRole);
     window.history.pushState({}, "", `${window.location.pathname}?${params.toString()}`);
     setRole(nextRole);
     setPage(nextPage);

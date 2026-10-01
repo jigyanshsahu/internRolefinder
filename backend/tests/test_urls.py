@@ -50,6 +50,19 @@ def test_normalizes_entry_level_ats_metadata_for_fresher_roles():
     assert jobs[0].role_type == RoleType.sde
 
 
+@pytest.mark.parametrize("location", ["Bangalore", "Bengaluru", "Onsite in Bangalore"])
+def test_recognizes_indian_city_as_country(location):
+    jobs = _normalize_board_jobs(
+        "Example",
+        "lever",
+        "example",
+        "https://boards.example.com",
+        [{"text": "Software Engineer Intern", "applyUrl": "https://jobs.example.com/1", "categories": {"location": location}}],
+    )
+
+    assert jobs[0].country == "India"
+
+
 def test_parses_gemini_companies_and_rejects_unsafe_websites():
     payload = {
         "candidates": [{

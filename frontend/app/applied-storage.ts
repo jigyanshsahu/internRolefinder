@@ -13,7 +13,7 @@ export function readAppliedJobs(): Job[] {
       (typeof job?.company === "string" || job?.company === null) &&
       (job?.location === undefined || typeof job?.location === "string" || job?.location === null) &&
       typeof job?.role_type === "string" &&
-      ["sde", "ai", "other", "full_stack", "frontend", "backend", "web_engineer"].includes(job.role_type) &&
+      ["sde", "ai", "full_stack", "frontend", "backend", "web_engineer"].includes(job.role_type) &&
       typeof job?.apply_url === "string"
     );
     return validJobs.map((job) => ({
@@ -21,7 +21,7 @@ export function readAppliedJobs(): Job[] {
       location: job.location ?? null,
       country: job.country ?? null,
       is_remote: typeof job.is_remote === "boolean" ? job.is_remote : Boolean(job.location?.toLowerCase().includes("remote")),
-      role_type: ["full_stack", "frontend", "backend", "web_engineer"].includes(job.role_type) ? "sde" : job.role_type,
+      role_type: job.role_type === "ai" ? "ai" : "sde",
     }));
   } catch {
     return [];

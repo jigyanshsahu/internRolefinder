@@ -1,7 +1,7 @@
 "use client";
 
-export const jobsPerPage = 100;
-export type JobCategory = "sde" | "ai" | "other";
+export const jobsPerPage = 20;
+export type JobCategory = "sde" | "ai";
 export type Job = {
   id: string;
   title: string;
@@ -24,7 +24,7 @@ type JobListProps = {
   onAction: (job: Job) => void;
 };
 
-const label = (role: JobCategory) => ({ sde: "SDE", ai: "AI", other: "Other" })[role];
+const label = (role: JobCategory) => ({ sde: "SDE", ai: "AI" })[role];
 
 export default function JobList({ jobs, page, pageCount, onPageChange, appliedIds, actionLabel, disableAppliedAction, onAction }: JobListProps) {
   const firstVisiblePage = Math.max(1, Math.min(page - 2, pageCount - 4));
@@ -34,12 +34,17 @@ export default function JobList({ jobs, page, pageCount, onPageChange, appliedId
     <>
       {jobs.map((job) => {
         const applied = appliedIds.has(job.id);
+        const locationLabel = job.is_remote
+          ? job.location?.toLowerCase().includes("remote")
+            ? job.location
+            : `Remote${job.location ? ` · ${job.location}` : job.country ? ` · ${job.country}` : ""}`
+          : job.location ?? job.country;
         return (
           <article className="job" key={job.id}>
             <div>
               <h2>{job.title}</h2>
               {job.company && <p>{job.company}</p>}
-              {job.location && <p className="location">{job.location}</p>}
+              {locationLabel && <p className="location">{locationLabel}</p>}
               <span>{label(job.role_type)}</span>
             </div>
             <div className="job-actions">

@@ -1,10 +1,12 @@
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 from fastapi import Depends, FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import and_, case, func, inspect, select, text
 from sqlalchemy.orm import Session
 from app.config import get_settings
-from app.database import Base, engine, get_db
+from app.classifier import classify_role
+from app.database import Base, SessionLocal, engine, get_db
 from app.models import Job, RoleType
 from app.schemas import JobOut, JobPageOut, SummaryOut
 from app.worker import celery_app
@@ -17,6 +19,10 @@ app.add_middleware(CORSMiddleware, allow_origins=[settings.frontend_origin], all
 @app.on_event("startup")
 def create_tables() -> None:
     Base.metadata.create_all(bind=engine)
+    if engine.dialect.name == "postgresql":
+        for role_value in ("ai", "other"):
+            with engine.begin() as connection:
+                connection.execute(text(f"ALTER TYPE role_type ADD VALUE IF NOT EXISTS '{role_value}'"))
     job_columns = {column["name"] for column in inspect(engine).get_columns("jobs")}
     with engine.begin() as connection:
         if "location" not in job_columns:
@@ -26,12 +32,24 @@ def create_tables() -> None:
         if "is_remote" not in job_columns:
             connection.execute(text("ALTER TABLE jobs ADD COLUMN is_remote BOOLEAN NOT NULL DEFAULT FALSE"))
         connection.execute(text("UPDATE jobs SET country = 'India' WHERE country IS NULL AND LOWER(COALESCE(location, '')) LIKE '%india%'"))
+        connection.execute(text("""
+            UPDATE jobs SET country = 'India'
+            WHERE country IS NULL AND LOWER(COALESCE(location, '')) ~ '\\m(bangalore|bengaluru|hyderabad|mumbai|delhi|gurgaon|gurugram|noida|pune|chennai|kolkata|ahmedabad|jaipur|kochi|indore|thiruvananthapuram)\\M'
+        """))
         connection.execute(text("UPDATE jobs SET is_remote = TRUE WHERE LOWER(COALESCE(location, '')) LIKE '%remote%'"))
+        connection.execute(text("UPDATE jobs SET role_type = 'ai' WHERE LOWER(COALESCE(title, '')) LIKE '%forward deployed%'"))
         connection.execute(text("UPDATE jobs SET role_type = 'sde' WHERE role_type IN ('full_stack', 'frontend', 'backend', 'web_engineer')"))
-    if engine.dialect.name == "postgresql":
-        for role_value in ("ai", "other"):
-            with engine.begin() as connection:
-                connection.execute(text(f"ALTER TYPE role_type ADD VALUE IF NOT EXISTS '{role_value}'"))
+    db = SessionLocal()
+    try:
+        for job in db.scalars(select(Job)).all():
+            role_type = classify_role(job.title)
+            if role_type is None:
+                db.delete(job)
+            else:
+                job.role_type = role_type
+        db.commit()
+    finally:
+        db.close()
     # Start a discovery pass after each application startup. Redis keeps the
     # task until the worker is ready, avoiding an empty dashboard after a restart.
     if settings.gemini_api_key and settings.gemini_api_key.get_secret_value().strip():
@@ -46,15 +64,13 @@ def health() -> dict[str, str]:
 
 @app.get("/api/jobs", response_model=JobPageOut)
 def jobs(
-    role_type: RoleType | None = Query(default=None),
+    role_type: Literal["sde", "ai"] = Query(default="sde"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=100, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
     cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.verification_max_age_hours)
-    filters = [Job.last_checked_at >= cutoff]
-    if role_type:
-        filters.append(Job.role_type == role_type)
+    filters = [Job.last_checked_at >= cutoff, Job.role_type == RoleType(role_type)]
     total = db.scalar(select(func.count(Job.id)).where(*filters)) or 0
     total_pages = max(1, (total + page_size - 1) // page_size)
     page = min(page, total_pages)
@@ -84,6 +100,6 @@ def jobs(
 def summary(db: Session = Depends(get_db)):
     cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.verification_max_age_hours)
     rows = db.execute(select(Job.role_type, func.count(Job.id)).where(Job.last_checked_at >= cutoff).group_by(Job.role_type)).all()
-    counts = {role.value: 0 for role in RoleType}
+    counts = {RoleType.sde.value: 0, RoleType.ai.value: 0}
     counts.update({role.value: count for role, count in rows})
     return counts

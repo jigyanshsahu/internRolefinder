@@ -21,7 +21,6 @@ class JobOut(BaseModel):
 class SummaryOut(BaseModel):
     sde: int = 0
     ai: int = 0
-    other: int = 0
 
 
 class JobPageOut(BaseModel):

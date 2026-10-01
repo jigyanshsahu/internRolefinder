@@ -17,6 +17,10 @@ from app.models import RoleType
 
 SUPPORTED_ATS = {"greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee"}
 CLOSED_TERMS = ("job is no longer available", "position has been filled", "no longer accepting applications", "job not found", "this job has expired", "page not found")
+INDIA_CITY_PATTERN = re.compile(
+    r"\b(bangalore|bengaluru|hyderabad|mumbai|delhi|gurgaon|gurugram|noida|pune|chennai|kolkata|ahmedabad|jaipur|kochi|indore|thiruvananthapuram)\b",
+    re.I,
+)
 
 
 @dataclass(frozen=True)
@@ -95,6 +99,8 @@ def _country_label(value: object, location: object = None) -> str | None:
             return "India"
         return normalized[:150]
     if isinstance(location, str) and re.search(r"\bindia\b", location, re.I):
+        return "India"
+    if isinstance(location, str) and INDIA_CITY_PATTERN.search(location):
         return "India"
     return None
 

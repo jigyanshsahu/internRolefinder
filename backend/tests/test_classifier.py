@@ -1,3 +1,4 @@
+import pytest
 from app.classifier import classify_role
 from app.models import RoleType
 
@@ -22,8 +23,12 @@ def test_classifies_ai_internship():
     assert classify_role("Machine Learning Intern") == RoleType.ai
 
 
-def test_classifies_non_engineering_fresher_as_other():
-    assert classify_role("Marketing Fresher") == RoleType.other
+def test_classifies_forward_deployed_engineering_as_ai():
+    assert classify_role("Forward Deployed Software Engineer, Internship") == RoleType.ai
+
+
+def test_rejects_non_software_fresher():
+    assert classify_role("Marketing Fresher") is None
 
 
 def test_rejects_regular_full_time_role():
@@ -32,3 +37,20 @@ def test_rejects_regular_full_time_role():
 
 def test_classifies_entry_level_from_job_metadata():
     assert classify_role("Software Engineer", "Entry-level") == RoleType.sde
+
+
+@pytest.mark.parametrize("title", [
+    "Hardware Engineer Intern",
+    "Embedded Hardware Intern",
+    "HR Intern",
+    "Human Resources Intern",
+    "Process Planner Intern",
+    "Sr. Software Engineer Intern",
+    "Senior Software Engineer Intern",
+])
+def test_rejects_non_software_and_senior_internships(title):
+    assert classify_role(title) is None
+
+
+def test_rejects_generic_engineering_internship_without_software_signal():
+    assert classify_role("Engineer Intern") is None

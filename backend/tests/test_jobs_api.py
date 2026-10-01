@@ -30,7 +30,7 @@ def test_jobs_api_clamps_page_after_result_count_shrinks():
     db.scalar.return_value = 250
     db.scalars.return_value.all.return_value = []
 
-    response = jobs(page=99, page_size=100, db=db)
+    response = jobs(role_type="sde", page=99, page_size=100, db=db)
 
     assert response.page == 3
     assert response.total_pages == 3
