@@ -34,3 +34,22 @@ def test_jobs_api_clamps_page_after_result_count_shrinks():
 
     assert response.page == 3
     assert response.total_pages == 3
+
+
+def test_jobs_api_prioritizes_discovered_startup_boards():
+    startup_board = Mock(platform="greenhouse", slug="early-stage-company")
+    startup_boards_result = Mock()
+    startup_boards_result.all.return_value = [startup_board]
+    jobs_result = Mock()
+    jobs_result.all.return_value = []
+    db = Mock()
+    db.scalar.return_value = 1
+    db.scalars.side_effect = [startup_boards_result, jobs_result]
+
+    jobs(role_type="sde", page=1, page_size=20, db=db)
+
+    query = db.scalars.call_args.args[0]
+    compiled = query.compile(dialect=postgresql.dialect())
+    assert "jobs.source_url" in str(compiled)
+    assert "early-stage-company" in str(compiled.params)
+    assert "jobs.source_url" not in str(compiled).split("ORDER BY")[0]

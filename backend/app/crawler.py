@@ -229,10 +229,11 @@ async def discover_indian_startup_boards() -> list[DiscoveredBoard]:
         return []
     limit = min(max(settings.startup_discovery_limit, 1), 100)
     prompt = (
-        f"List up to {limit} currently active, well-known startups headquartered in India. "
-        "Prioritize technology and product companies likely to hire software interns. "
+        f"List up to {limit} currently active, early-stage technology product startups headquartered in India. "
+        "Prioritize seed-to-Series-B companies likely to hire software interns. "
         "Return only companies with an official website you are confident about. "
-        "Do not invent company names or URLs, and do not return job boards, accelerators, or staffing firms. "
+        "Exclude multinational corporations, IT services/consulting firms, staffing firms, job boards, and accelerators. "
+        "Do not invent company names or URLs. "
         'Return JSON matching {"companies":[{"name":"Company name","website":"https://official-domain"}]}. '
         "These are discovery candidates; the application will verify official career links before crawling."
     )

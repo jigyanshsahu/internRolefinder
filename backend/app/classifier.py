@@ -18,12 +18,6 @@ AI_PATTERN = re.compile(
     r"\b(ai|artificial intelligence|machine[ -]?learning|ml|deep learning|llm|large language models?|nlp|natural language processing|computer vision|generative ai|genai|data scientist|robotics|forward deployed)\b",
     re.I,
 )
-SDE_PATTERN = re.compile(
-    r"\b(sde|swe|software|developer|development|engineer|backend|back[ -]?end|frontend|front[ -]?end|full[ -]?stack|web engineer|web developer|devops|platform engineer|site reliability|data engineer|mobile engineer)\b",
-    re.I,
-)
-
-
 def classify_role(title: str, text: str = "") -> RoleType | None:
     title_value = title.lower()
     value = f"{title} {text}".lower()

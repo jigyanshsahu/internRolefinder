@@ -6,8 +6,9 @@ from sqlalchemy import and_, case, func, inspect, select, text
 from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.classifier import classify_role
+from app.crawler import _board_url
 from app.database import Base, SessionLocal, engine, get_db
-from app.models import Job, RoleType
+from app.models import Job, RoleType, StartupBoard
 from app.schemas import JobOut, JobPageOut, SummaryOut
 from app.worker import celery_app
 
@@ -74,6 +75,11 @@ def jobs(
     total = db.scalar(select(func.count(Job.id)).where(*filters)) or 0
     total_pages = max(1, (total + page_size - 1) // page_size)
     page = min(page, total_pages)
+    startup_source_urls = [
+        _board_url(board.platform, board.slug)
+        for board in db.scalars(select(StartupBoard)).all()
+    ]
+    startup_priority = case((Job.source_url.in_(startup_source_urls), 0), else_=1)
     sort_priority = case(
         (and_(Job.country == "India", Job.is_remote.is_(True)), 0),
         (Job.country == "India", 1),
@@ -83,7 +89,7 @@ def jobs(
     query = (
         select(Job)
         .where(*filters)
-        .order_by(sort_priority, Job.first_seen_at.desc())
+        .order_by(startup_priority, sort_priority, Job.first_seen_at.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     )

@@ -19,12 +19,11 @@ An automated directory of verified software internship and fresher application l
   - Only explicit software/AI internship or fresher postings are eligible; hardware, HR, process-planning, and other non-software postings are excluded.
   - Automatic exclusion of senior, staff, lead, principal, and manager roles.
 - **Geographic Normalization & Prioritized Ranking**:
+  - Prioritizes Indian early-stage product startup listings discovered from verified company career pages over MNC and IT services listings.
   - Automatically identifies Indian tech hubs (Bengaluru/Bangalore, Hyderabad, Mumbai, Delhi, Gurgaon/Gurugram, Noida, Pune, Chennai, Kolkata, Ahmedabad, Jaipur, Kochi, Indore, Thiruvananthapuram) as India.
   - Prioritizes results in the order:
-    1. **India Remote**
-    2. **India Onsite / Hybrid**
-    3. **International Remote**
-    4. **Other International**
+    1. **Discovered Indian startup roles**, with India Remote first, then India Onsite / Hybrid
+    2. **Other roles**, with India Remote first, then India Onsite / Hybrid, International Remote, and Other International
 - **Automated Verification & Self-Cleaning**:
   - Background worker periodically visits application links to check validity.
   - Detects closed or expired postings (e.g., *"job is no longer available"*, *"position has been filled"*, 404 responses) and automatically prunes them from the database.
