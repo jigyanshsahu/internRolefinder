@@ -3,10 +3,13 @@ import json
 import httpx
 import pytest
 from app.crawler import (
+    _fetch_schema_board,
     _find_company_board,
     _normalize_board_jobs,
+    _normalize_schema_jobs,
     _parse_gemini_companies,
     _board_from_url,
+    _board_url,
     canonical_url,
 )
 from app.models import RoleType
@@ -48,6 +51,92 @@ def test_normalizes_entry_level_ats_metadata_for_fresher_roles():
 
     assert len(jobs) == 1
     assert jobs[0].role_type == RoleType.sde
+
+
+def test_normalizes_workday_internship_posting():
+    jobs = _normalize_board_jobs(
+        "Example",
+        "workday",
+        "example|example.wd5.myworkdayjobs.com|External|en-US",
+        "https://example.wd5.myworkdayjobs.com/wday/cxs/example/External/jobs",
+        {
+            "jobPostings": [{
+                "title": "Software Engineer Intern",
+                "externalPath": "/job/Bengaluru/Software-Engineer-Intern_R123",
+                "locationsText": "Bengaluru, India",
+                "remoteType": "Onsite",
+                "bulletFields": ["Internship"],
+            }, {
+                "title": "Software Engineer Intern",
+                "locationsText": "Bengaluru, India",
+                "bulletFields": ["Internship"],
+            }],
+        },
+    )
+
+    assert len(jobs) == 1
+    assert jobs[0].apply_url == "https://example.wd5.myworkdayjobs.com/en-US/External/job/Bengaluru/Software-Engineer-Intern_R123"
+    assert jobs[0].country == "India"
+    assert jobs[0].role_type == RoleType.sde
+
+
+def test_workday_board_url_uses_tenant_and_site():
+    assert _board_url("workday", "example|example.wd5.myworkdayjobs.com|External|en-US") == (
+        "https://example.wd5.myworkdayjobs.com/wday/cxs/example/External/jobs"
+    )
+
+
+def test_normalizes_schema_job_posting_and_canonicalizes_apply_url():
+    html = f'<script type="application/ld+json">{json.dumps({"@type": "JobPosting", "title": "Software Engineer Intern", "employmentType": "Internship", "url": "/jobs/swe-intern?utm_source=careers", "jobLocation": {"address": {"addressLocality": "Bengaluru", "addressRegion": "Karnataka", "addressCountry": "India"}}})}</script>'
+
+    jobs = _normalize_schema_jobs("Example", "https://example.in/jobs/swe-intern", "https://example.in/careers", html)
+
+    assert len(jobs) == 1
+    assert jobs[0].apply_url == "https://example.in/jobs/swe-intern"
+    assert jobs[0].location == "Bengaluru, Karnataka, India"
+    assert jobs[0].country == "India"
+    assert jobs[0].role_type == RoleType.sde
+
+
+def test_normalizes_nested_schema_job_postings():
+    html = f'<script type="application/ld+json">{json.dumps({"@graph": [{"@type": ["Thing", "JobPosting"], "title": "Machine Learning Intern", "description": "Internship", "url": "https://example.in/jobs/ml-intern", "jobLocationType": "TELECOMMUTE"}]})}</script>'
+
+    jobs = _normalize_schema_jobs("Example", "https://example.in/careers", "https://example.in/careers", html)
+
+    assert len(jobs) == 1
+    assert jobs[0].is_remote is True
+    assert jobs[0].location == "Remote"
+    assert jobs[0].role_type == RoleType.ai
+
+
+def test_fetch_schema_board_reads_same_company_detail_pages_and_deduplicates():
+    posting = {
+        "@type": "JobPosting",
+        "title": "Software Engineer Intern",
+        "employmentType": "Internship",
+        "url": "https://example.in/jobs/swe-intern",
+    }
+
+    async def run_discovery():
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/careers":
+                html = f'<a href="/jobs/swe-intern">Software Engineer Intern</a><script type="application/ld+json">{json.dumps(posting)}</script>'
+                return httpx.Response(200, headers={"content-type": "text/html"}, text=html)
+            if request.url.path == "/jobs/swe-intern":
+                html = f'<script type="application/ld+json">{json.dumps(posting)}</script>'
+                return httpx.Response(200, headers={"content-type": "text/html"}, text=html)
+            return httpx.Response(404)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True) as client:
+            return await _fetch_schema_board(
+                client,
+                {"name": "Example", "platform": "schema", "slug": "example.in", "careers_url": "https://example.in/careers"},
+            )
+
+    jobs = asyncio.run(run_discovery())
+
+    assert len(jobs) == 1
+    assert jobs[0].apply_url == "https://example.in/jobs/swe-intern"
 
 
 @pytest.mark.parametrize("location", ["Bangalore", "Bengaluru", "Onsite in Bangalore"])
@@ -94,6 +183,7 @@ def test_parses_gemini_companies_and_rejects_unsafe_websites():
         ("https://jobs.smartrecruiters.com/acme/123-role", ("smartrecruiters", "acme")),
         ("https://apply.workable.com/acme/jobs/123", ("workable", "acme")),
         ("https://acme.recruitee.com/o/intern", ("recruitee", "acme")),
+        ("https://acme.wd5.myworkdayjobs.com/en-US/External/job/India/Intern_R123", ("workday", "acme|acme.wd5.myworkdayjobs.com|External|en-US")),
         ("https://example.in/careers", None),
     ],
 )
@@ -125,3 +215,33 @@ def test_discovers_ats_board_from_official_careers_page():
 
     assert board is not None
     assert (board.company_name, board.platform, board.slug) == ("Example Startup", "lever", "example-startup")
+
+
+def test_discovers_custom_careers_page_without_ats_board():
+    async def run_discovery():
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.host == "example.in" and request.url.path == "/":
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "text/html"},
+                    text='<a href="https://example.in/careers">Careers</a>',
+                )
+            if request.url.path == "/careers":
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "text/html"},
+                    text='<a href="/jobs/software-engineer-intern">Software Engineer Intern</a>',
+                )
+            return httpx.Response(404)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True) as client:
+            return await _find_company_board(client, "Example Startup", "https://example.in")
+
+    board = asyncio.run(run_discovery())
+
+    assert board is not None
+    assert (board.platform, board.slug, board.careers_url) == (
+        "schema",
+        "example.in",
+        "https://example.in/careers",
+    )

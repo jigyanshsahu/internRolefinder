@@ -6,7 +6,7 @@ from sqlalchemy import and_, case, func, inspect, select, text
 from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.classifier import classify_role
-from app.crawler import _board_url
+from app.crawler import _board_url, canonical_url
 from app.database import Base, SessionLocal, engine, get_db
 from app.models import Job, RoleType, StartupBoard
 from app.schemas import JobOut, JobPageOut, SummaryOut
@@ -76,7 +76,7 @@ def jobs(
     total_pages = max(1, (total + page_size - 1) // page_size)
     page = min(page, total_pages)
     startup_source_urls = [
-        _board_url(board.platform, board.slug)
+        canonical_url(board.careers_url) if board.platform == "schema" else _board_url(board.platform, board.slug)
         for board in db.scalars(select(StartupBoard)).all()
     ]
     startup_priority = case((Job.source_url.in_(startup_source_urls), 0), else_=1)

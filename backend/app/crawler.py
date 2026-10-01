@@ -15,7 +15,7 @@ from app.config import get_settings
 from app.classifier import classify_role
 from app.models import RoleType
 
-SUPPORTED_ATS = {"greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee"}
+CATALOG_ATS = {"greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee"}
 CLOSED_TERMS = ("job is no longer available", "position has been filled", "no longer accepting applications", "job not found", "this job has expired", "page not found")
 INDIA_CITY_PATTERN = re.compile(
     r"\b(bangalore|bengaluru|hyderabad|mumbai|delhi|gurgaon|gurugram|noida|pune|chennai|kolkata|ahmedabad|jaipur|kochi|indore|thiruvananthapuram)\b",
@@ -64,6 +64,9 @@ def _board_url(platform: str, slug: str) -> str:
         return f"https://api.smartrecruiters.com/v1/companies/{quote(slug, safe='')}/postings"
     if platform == "workable":
         return f"https://www.workable.com/api/accounts/{quote(slug, safe='')}"
+    if platform == "workday":
+        tenant, hostname, site, _locale = slug.split("|", 3)
+        return f"https://{hostname}/wday/cxs/{quote(tenant, safe='')}/{quote(site, safe='')}/jobs"
     return f"https://{quote(slug, safe='')}.recruitee.com/api/offers/"
 
 
@@ -175,6 +178,9 @@ def _board_from_url(url: str) -> tuple[str, str] | None:
         return "workable", hostname.removesuffix(".workable.com")
     if hostname.endswith(".recruitee.com"):
         return "recruitee", hostname.removesuffix(".recruitee.com")
+    if hostname.endswith(".myworkdayjobs.com") and len(path_parts) >= 2:
+        tenant = hostname.split(".", 1)[0]
+        return "workday", f"{tenant}|{hostname}|{path_parts[1]}|{path_parts[0]}"
     return None
 
 
@@ -199,6 +205,126 @@ def _links_from_page(page_url: str, html: str) -> tuple[list[str], list[str]]:
     return ats_links, careers_pages
 
 
+def _job_links_from_page(page_url: str, html: str) -> list[str]:
+    soup = BeautifulSoup(html, "html.parser")
+    links = []
+    for anchor in soup.find_all("a", href=True):
+        link_url = urljoin(page_url, anchor["href"])
+        if urlsplit(link_url).scheme not in {"http", "https"} or not _same_company_host(page_url, link_url):
+            continue
+        label = f"{anchor.get_text(' ', strip=True)} {urlsplit(link_url).path}"
+        if re.search(r"\b(job|position|opening|intern|role)\b", label, re.I):
+            links.append(canonical_url(link_url))
+    return list(dict.fromkeys(links))
+
+
+def _schema_job_postings(value: object) -> list[dict]:
+    if isinstance(value, list):
+        return [posting for item in value for posting in _schema_job_postings(item)]
+    if not isinstance(value, dict):
+        return []
+    job_type = value.get("@type")
+    postings = [value] if job_type == "JobPosting" or isinstance(job_type, list) and "JobPosting" in job_type else []
+    for key in ("@graph", "mainEntity", "itemListElement", "item"):
+        postings.extend(_schema_job_postings(value.get(key)))
+    return postings
+
+
+def _schema_text(value: object) -> str:
+    if isinstance(value, str):
+        return BeautifulSoup(value, "html.parser").get_text(" ", strip=True)
+    if isinstance(value, dict):
+        return " ".join(_schema_text(part) for part in value.values())
+    if isinstance(value, list):
+        return " ".join(_schema_text(part) for part in value)
+    return ""
+
+
+def _schema_location(posting: dict) -> tuple[str | None, bool]:
+    places = posting.get("jobLocation")
+    if isinstance(places, dict):
+        places = [places]
+    labels = []
+    for place in places if isinstance(places, list) else []:
+        if not isinstance(place, dict):
+            continue
+        address = place.get("address")
+        if isinstance(address, str):
+            labels.append(address)
+        elif isinstance(address, dict):
+            country = address.get("addressCountry")
+            if isinstance(country, dict):
+                country = country.get("name")
+            parts = (address.get("addressLocality"), address.get("addressRegion"), country)
+            labels.append(", ".join(str(part).strip() for part in parts if isinstance(part, str) and part.strip()))
+    location_type = _schema_text(posting.get("jobLocationType")).lower()
+    remote = "telecommute" in location_type or "remote" in location_type
+    location = _location_label(", ".join(label for label in labels if label))
+    return location or ("Remote" if remote else None), remote
+
+
+def _normalize_schema_jobs(company: str, page_url: str, source_url: str, html: str) -> list[ExtractedJob]:
+    soup = BeautifulSoup(html, "html.parser")
+    results = []
+    for script in soup.find_all("script", attrs={"type": re.compile(r"application/ld\+json", re.I)}):
+        try:
+            payload = json.loads(script.string or script.get_text())
+        except (TypeError, ValueError):
+            continue
+        for posting in _schema_job_postings(payload):
+            title = posting.get("title")
+            if not isinstance(title, str) or not title.strip():
+                continue
+            role_context = " ".join(
+                _schema_text(posting.get(field))
+                for field in ("employmentType", "experienceRequirements", "qualifications", "educationRequirements", "description")
+            )
+            role_type = classify_role(title, role_context)
+            apply_url = posting.get("url")
+            if not isinstance(apply_url, str) or not apply_url.strip():
+                apply_url = page_url
+            apply_url = urljoin(page_url, apply_url)
+            if not role_type or urlsplit(apply_url).scheme not in {"http", "https"}:
+                continue
+            location, remote = _schema_location(posting)
+            results.append(ExtractedJob(
+                title=title.strip()[:500],
+                company=company[:300],
+                location=location,
+                country=_country_label(None, location),
+                is_remote=remote,
+                role_type=role_type,
+                apply_url=canonical_url(apply_url),
+                source_url=canonical_url(source_url),
+            ))
+    return results
+
+
+async def _fetch_schema_board(client: httpx.AsyncClient, board: dict[str, str]) -> list[ExtractedJob]:
+    careers_url = board.get("careers_url", "")
+    if urlsplit(careers_url).scheme not in {"http", "https"}:
+        return []
+    try:
+        response = await client.get(careers_url)
+        if response.status_code != 200 or "text/html" not in response.headers.get("content-type", "text/html"):
+            return []
+        if not _same_company_host(careers_url, str(response.url)):
+            return []
+        jobs = _normalize_schema_jobs(board["name"], str(response.url), careers_url, response.text)
+        detail_urls = _job_links_from_page(str(response.url), response.text)[:8]
+        for detail_url in detail_urls:
+            try:
+                detail = await client.get(detail_url)
+            except httpx.HTTPError:
+                continue
+            if detail.status_code == 200 and "text/html" in detail.headers.get("content-type", "text/html") and _same_company_host(careers_url, str(detail.url)):
+                jobs.extend(_normalize_schema_jobs(board["name"], str(detail.url), careers_url, detail.text))
+        unique_jobs = {job.apply_url: job for job in jobs}
+        return list(unique_jobs.values())
+    except (httpx.HTTPError, ValueError):
+        return []
+
+
 async def _find_company_board(client: httpx.AsyncClient, name: str, website: str) -> DiscoveredBoard | None:
     try:
         homepage = await client.get(website)
@@ -217,6 +343,13 @@ async def _find_company_board(client: httpx.AsyncClient, name: str, website: str
             if board:
                 platform, slug = board
                 return DiscoveredBoard(company_name=name, platform=platform, slug=slug, careers_url=ats_link)
+        if pages_to_check:
+            return DiscoveredBoard(
+                company_name=name,
+                platform="schema",
+                slug=urlsplit(homepage_url).hostname or homepage_url,
+                careers_url=pages_to_check[0],
+            )
     except (httpx.HTTPError, ValueError):
         return None
     return None
@@ -362,6 +495,25 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
             )
             for item in items
         )
+    elif platform == "workday":
+        items = payload.get("jobPostings", []) if isinstance(payload, dict) else []
+        _, hostname, site, locale = slug.split("|", 3)
+        mappings = (
+            (
+                item.get("title", ""),
+                f"https://{hostname}/{locale}/{quote(site, safe='')}{item['externalPath']}"
+                if isinstance(item.get("externalPath"), str) else None,
+                _location_label(item.get("locationsText"), item.get("remoteType")),
+                _country_label(None, item.get("locationsText")),
+                _is_remote(item.get("locationsText"), workplace_type=item.get("remoteType")),
+                _role_context(
+                    item.get("employmentType"),
+                    " ".join(value for value in item.get("bulletFields", []) if isinstance(value, str))
+                    if isinstance(item.get("bulletFields"), list) else "",
+                ),
+            )
+            for item in items
+        )
     else:
         return []
 
@@ -386,15 +538,35 @@ async def discover_jobs_from_public_ats(extra_boards: list[dict[str, str]] | Non
     async with httpx.AsyncClient(timeout=25, follow_redirects=True, headers=headers) as client:
         catalog_response = await client.get(settings.public_ats_company_catalog_url)
         catalog_response.raise_for_status()
-        catalog_boards = [entry for entry in catalog_response.json() if entry.get("platform") in SUPPORTED_ATS and entry.get("slug")]
+        catalog_boards = [entry for entry in catalog_response.json() if entry.get("platform") in CATALOG_ATS and entry.get("slug")]
         boards = catalog_boards + (extra_boards or [])
         semaphore = asyncio.Semaphore(8)
 
         async def fetch_board(board: dict) -> list[ExtractedJob]:
             async with semaphore:
                 platform, slug, company = board["platform"], board["slug"], board["name"]
+                if platform == "schema":
+                    return await _fetch_schema_board(client, board)
                 source_url = _board_url(platform, slug)
                 try:
+                    if platform == "workday":
+                        jobs: list[ExtractedJob] = []
+                        offset = 0
+                        while True:
+                            response = await client.post(
+                                source_url,
+                                json={"appliedFacets": {}, "limit": 20, "offset": offset, "searchText": ""},
+                            )
+                            if response.status_code != 200:
+                                break
+                            payload = response.json()
+                            items = payload.get("jobPostings", []) if isinstance(payload, dict) else []
+                            jobs.extend(_normalize_board_jobs(company, platform, slug, source_url, payload))
+                            total = payload.get("total", 0) if isinstance(payload, dict) else 0
+                            if not items or offset + len(items) >= total:
+                                break
+                            offset += len(items)
+                        return jobs
                     if platform == "smartrecruiters":
                         jobs: list[ExtractedJob] = []
                         offset = 0

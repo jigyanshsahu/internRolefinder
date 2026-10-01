@@ -28,7 +28,7 @@ def discover_jobs() -> int:
     db = SessionLocal()
     try:
         startup_boards = [
-            {"name": board.company_name, "platform": board.platform, "slug": board.slug}
+            {"name": board.company_name, "platform": board.platform, "slug": board.slug, "careers_url": board.careers_url}
             for board in db.scalars(select(StartupBoard)).all()
         ]
         for job in asyncio.run(discover_jobs_from_public_ats(startup_boards)):

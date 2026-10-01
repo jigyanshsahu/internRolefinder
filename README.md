@@ -13,6 +13,8 @@ An automated directory of verified software internship and fresher application l
   - **SmartRecruiters** (`api.smartrecruiters.com`)
   - **Workable** (`www.workable.com/api/accounts`)
   - **Recruitee** (`{company}.recruitee.com/api/offers`)
+  - **Workday** (public `myworkdayjobs.com` career boards)
+  - **Official career pages** that publish Schema.org `JobPosting` JSON-LD
 - **Intelligent Role Classification**:
   - **SDE**: Software Engineering, Full-Stack, Frontend, Backend, Web Development, DevOps, Platform Engineering, Site Reliability, Data Engineering, and Mobile Engineering.
   - **AI**: Generative AI, LLMs, Machine Learning, Deep Learning, Computer Vision, NLP, Data Science, Robotics, and Forward Deployed Engineering.
@@ -32,7 +34,7 @@ An automated directory of verified software internship and fresher application l
   - Persisted in the browser via `localStorage` with a dedicated **Applied internships** view (`/applied`).
 - **Optional Gemini-Powered Indian Startup Discovery**:
   - Configure `GEMINI_API_KEY` to discover emerging Indian tech companies.
-  - Automatically resolves their official careers pages and indexes them if they use a supported ATS.
+  - Automatically resolves official careers pages and indexes supported ATS feeds or structured `JobPosting` data.
 
 ---
 
