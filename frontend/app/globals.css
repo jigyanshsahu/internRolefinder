@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color: #e9edf7; background: #0b1020; font-family: Arial, Helvetica, sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 20% 0%, #192b55, #0b1020 45rem); }
+main { width: min(800px, calc(100% - 32px)); margin: 0 auto; padding: 72px 0; }
+header { margin-bottom: 32px; }
+.eyebrow { color: #87a9ff; letter-spacing: .09em; text-transform: uppercase; font-size: .75rem; font-weight: 700; margin: 0 0 10px; }
+h1 { margin: 0; font-size: clamp(2.25rem, 8vw, 3.75rem); letter-spacing: -.06em; }
+.subtle { margin: 12px 0 0; color: #b4bfd8; max-width: 480px; line-height: 1.55; }
+nav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+button { border: 1px solid #3a486c; background: #121a30; color: #d9e1f4; border-radius: 999px; padding: 9px 13px; cursor: pointer; font-weight: 600; }
+button:hover, button.selected { background: #3867e8; border-color: #5780f2; color: white; }
+.page-links { display: flex; gap: 18px; border-bottom: 1px solid #293858; margin-bottom: 22px; }
+.page-links a { color: #b9c4db; text-decoration: none; padding: 0 0 12px; }
+.page-links a[aria-current="page"] { color: #fff; border-bottom: 2px solid #87a9ff; }
+.job { background: rgba(20, 29, 53, .9); border: 1px solid #293858; border-radius: 14px; padding: 20px; margin: 10px 0; display: flex; gap: 20px; align-items: center; justify-content: space-between; }
+.job h2 { font-size: 1rem; margin: 0 0 7px; color: #f5f7fc; }
+.job p { color: #b9c4db; margin: 0 0 9px; }
+.job .location { color: #91abef; font-size: .9rem; }
+.job span { color: #91abef; font-size: .8rem; text-transform: capitalize; }
+.job a { color: white; background: #3564e8; border-radius: 9px; text-decoration: none; padding: 10px 13px; font-weight: 700; white-space: nowrap; }
+.job a:hover { background: #4b76ef; }
+.job-actions { display: flex; align-items: center; gap: 8px; }
+.job .application-action { border-radius: 9px; white-space: nowrap; }
+.job .application-action:disabled, .pagination button:disabled { cursor: default; opacity: .55; }
+.pagination { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+.pagination span { color: #b9c4db; font-size: .9rem; }
+.result-count { color: #b9c4db; font-size: .9rem; margin: 0 0 12px; }
+.status { padding: 28px 0; color: #b9c4db; line-height: 1.5; }
+.error { color: #ffadb1; }
+@media (max-width: 480px) { main { padding-top: 42px; } .job { align-items: flex-start; flex-direction: column; } .job-actions { width: 100%; flex-wrap: wrap; } .job-actions a, .job-actions button { flex: 1; text-align: center; } }

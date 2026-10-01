@@ -1,0 +1,84 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-internrolefinder}
+      POSTGRES_USER: ${POSTGRES_USER:-internrolefinder}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  api:
+    build: ./backend
+    environment:
+      PUBLIC_ATS_COMPANY_CATALOG_URL: ${PUBLIC_ATS_COMPANY_CATALOG_URL:-https://raw.githubusercontent.com/ConorsCode/open-jobs-data/main/companies.json}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      STARTUP_DISCOVERY_LIMIT: ${STARTUP_DISCOVERY_LIMIT:-40}
+      STARTUP_DISCOVERY_INTERVAL_HOURS: ${STARTUP_DISCOVERY_INTERVAL_HOURS:-168}
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build: ./backend
+    environment:
+      PUBLIC_ATS_COMPANY_CATALOG_URL: ${PUBLIC_ATS_COMPANY_CATALOG_URL:-https://raw.githubusercontent.com/ConorsCode/open-jobs-data/main/companies.json}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      STARTUP_DISCOVERY_LIMIT: ${STARTUP_DISCOVERY_LIMIT:-40}
+      STARTUP_DISCOVERY_INTERVAL_HOURS: ${STARTUP_DISCOVERY_INTERVAL_HOURS:-168}
+    command: celery -A app.worker.celery_app worker --loglevel=warning
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  beat:
+    build: ./backend
+    environment:
+      PUBLIC_ATS_COMPANY_CATALOG_URL: ${PUBLIC_ATS_COMPANY_CATALOG_URL:-https://raw.githubusercontent.com/ConorsCode/open-jobs-data/main/companies.json}
+      STARTUP_DISCOVERY_INTERVAL_HOURS: ${STARTUP_DISCOVERY_INTERVAL_HOURS:-168}
+    command: celery -A app.worker.celery_app beat --loglevel=info
+    volumes:
+      - ./backend:/app
+    depends_on:
+      redis:
+        condition: service_started
+
+  web:
+    build: ./frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
