@@ -7,10 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
 
-class RoleType(str, enum.Enum):
-    sde = "sde"
-    ai = "ai"
-    other = "other"
+from app.types import RoleType
 
 
 class Job(Base):
@@ -22,6 +19,8 @@ class Job(Base):
     country: Mapped[str | None] = mapped_column(String(150), nullable=True)
     is_remote: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     role_type: Mapped[RoleType] = mapped_column(Enum(RoleType, name="role_type"), index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     apply_url: Mapped[str] = mapped_column(Text, unique=True)
     source_url: Mapped[str] = mapped_column(Text)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -39,3 +38,17 @@ class StartupBoard(Base):
     slug: Mapped[str] = mapped_column(String(300))
     careers_url: Mapped[str] = mapped_column(Text)
     discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CompanySeed(Base):
+    __tablename__ = "company_seeds"
+    __table_args__ = (UniqueConstraint("company_name", name="uq_company_seeds_company_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    company_name: Mapped[str] = mapped_column(String(300))
+    website_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    careers_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    status: Mapped[str] = mapped_column(String(40), default="pending", server_default="pending")
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)

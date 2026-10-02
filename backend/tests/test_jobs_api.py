@@ -1,8 +1,10 @@
+from types import SimpleNamespace
 from unittest.mock import Mock
+from uuid import uuid4
 
 from sqlalchemy.dialects import postgresql
 
-from app.main import jobs
+from app.main import company_seeds, jobs
 from app.models import RoleType
 
 
@@ -52,4 +54,57 @@ def test_jobs_api_prioritizes_discovered_startup_boards():
     compiled = query.compile(dialect=postgresql.dialect())
     assert "jobs.source_url" in str(compiled)
     assert "early-stage-company" in str(compiled.params)
-    assert "jobs.source_url" not in str(compiled).split("ORDER BY")[0]
+    statement = str(compiled)
+    where_clause = statement.split("WHERE", 1)[1].split("ORDER BY", 1)[0]
+    assert "jobs.source_url" not in where_clause
+    ordering = statement.split("ORDER BY", 1)[1]
+    assert ordering.index("jobs.is_remote") < ordering.index("jobs.source_url")
+
+
+def test_jobs_api_defaults_to_remote_only_filter():
+    db = Mock()
+    db.scalar.return_value = 50
+    db.scalars.return_value.all.return_value = []
+
+    jobs(role_type="sde", page=1, page_size=20, db=db)
+
+    query = db.scalars.call_args.args[0]
+    compiled = query.compile(dialect=postgresql.dialect())
+    statement = str(compiled)
+    where_clause = statement.split("WHERE", 1)[1].split("ORDER BY", 1)[0]
+    assert "jobs.is_remote = true" in where_clause.lower()
+
+
+def test_jobs_api_can_disable_remote_only():
+    db = Mock()
+    db.scalar.return_value = 50
+    db.scalars.return_value.all.return_value = []
+
+    jobs(role_type="sde", remote_only=False, page=1, page_size=20, db=db)
+
+    query = db.scalars.call_args.args[0]
+    compiled = query.compile(dialect=postgresql.dialect())
+    statement = str(compiled)
+    where_clause = statement.split("WHERE", 1)[1].split("ORDER BY", 1)[0]
+    assert "jobs.is_remote" not in where_clause.lower()
+
+
+def test_company_seed_status_api_returns_source_and_freshness_fields():
+    seed = SimpleNamespace(
+        id=uuid4(),
+        company_name="Drivetrain",
+        website_url="https://www.drivetrain.ai",
+        careers_url="https://jobs.lever.co/drivetrain",
+        enabled=True,
+        status="board_found",
+        last_checked_at=None,
+        last_error=None,
+    )
+    db = Mock()
+    db.scalars.return_value.all.return_value = [seed]
+
+    response = company_seeds(db)
+
+    assert response[0].company_name == "Drivetrain"
+    assert response[0].status == "board_found"
+    assert str(response[0].careers_url) == "https://jobs.lever.co/drivetrain"

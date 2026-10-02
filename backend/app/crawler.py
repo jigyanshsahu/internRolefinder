@@ -5,6 +5,7 @@ that rejects ordinary access is skipped and can be rediscovered later.
 """
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import ipaddress
 import json
 import re
@@ -13,10 +14,43 @@ from bs4 import BeautifulSoup
 import httpx
 from app.config import get_settings
 from app.classifier import classify_role
-from app.models import RoleType
+from app.types import RoleType
 
-CATALOG_ATS = {"greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee"}
-CLOSED_TERMS = ("job is no longer available", "position has been filled", "no longer accepting applications", "job not found", "this job has expired", "page not found")
+CATALOG_ATS = {"greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "keka", "freshteam", "zohorecruit"}
+CLOSED_TERMS = (
+    "job is no longer available",
+    "position has been filled",
+    "no longer accepting applications",
+    "job not found",
+    "this job has expired",
+    "page not found",
+    "this position is closed",
+    "posting has closed",
+    "job expired",
+    "opening is closed",
+    "job closed",
+    "position closed",
+    "role closed",
+    "application closed",
+    "no longer active",
+)
+AGGREGATOR_DOMAINS = {
+    "linkedin.com", "indeed.com", "glassdoor.com", "internshala.com",
+    "naukri.com", "wellfound.com", "angel.co", "cutshort.io",
+    "foundit.in", "simplyhired.com", "simplyhired.co.in", "shine.com",
+    "instahyre.com", "cuvette.tech", "jobaaj.com", "unstop.com",
+    "timesjobs.com", "freshersworld.com", "hirist.tech", "hirist.com",
+    "ziprecruiter.com", "monster.com", "careerbuilder.com",
+}
+
+
+def is_aggregator_domain(url_or_host: str) -> bool:
+    if not url_or_host:
+        return False
+    parsed = urlsplit(url_or_host) if "://" in url_or_host else None
+    host = (parsed.hostname if parsed else url_or_host or "").lower().removeprefix("www.")
+    return any(host == domain or host.endswith(f".{domain}") for domain in AGGREGATOR_DOMAINS)
+
 INDIA_CITY_PATTERN = re.compile(
     r"\b(bangalore|bengaluru|hyderabad|mumbai|delhi|gurgaon|gurugram|noida|pune|chennai|kolkata|ahmedabad|jaipur|kochi|indore|thiruvananthapuram)\b",
     re.I,
@@ -33,6 +67,8 @@ class ExtractedJob:
     role_type: RoleType
     apply_url: str
     source_url: str
+    description: str | None = None
+    posted_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +77,13 @@ class DiscoveredBoard:
     platform: str
     slug: str
     careers_url: str
+
+
+@dataclass(frozen=True)
+class CompanyBoardDiscovery:
+    company_name: str
+    board: DiscoveredBoard | None
+    status: str
 
 
 CAREERS_LINK_PATTERN = re.compile(r"\b(career|careers|jobs|job openings|open positions|join our team)\b", re.I)
@@ -55,7 +98,7 @@ def canonical_url(url: str) -> str:
 
 def _board_url(platform: str, slug: str) -> str:
     if platform == "greenhouse":
-        return f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs"
+        return f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
     if platform == "lever":
         return f"https://api.lever.co/v0/postings/{slug}?mode=json"
     if platform == "ashby":
@@ -67,6 +110,15 @@ def _board_url(platform: str, slug: str) -> str:
     if platform == "workday":
         tenant, hostname, site, _locale = slug.split("|", 3)
         return f"https://{hostname}/wday/cxs/{quote(tenant, safe='')}/{quote(site, safe='')}/jobs"
+    if platform == "keka":
+        return f"https://{quote(slug, safe='')}.keka.com/careers/api/jobpostings"
+    if platform == "freshteam":
+        return f"https://{quote(slug, safe='')}.freshteam.com/jobs.json"
+    if platform == "zohorecruit":
+        parts = slug.split("|", 1)
+        sub = parts[0]
+        tld = parts[1] if len(parts) > 1 else "in"
+        return f"https://{quote(sub, safe='')}.zohorecruit.{tld}/jobs/Careers"
     return f"https://{quote(slug, safe='')}.recruitee.com/api/offers/"
 
 
@@ -161,6 +213,8 @@ def _parse_gemini_companies(payload: object) -> list[dict[str, str]]:
 
 
 def _board_from_url(url: str) -> tuple[str, str] | None:
+    if is_aggregator_domain(url):
+        return None
     parsed_url = urlsplit(url)
     hostname = (parsed_url.hostname or "").lower()
     path_parts = [part for part in parsed_url.path.split("/") if part]
@@ -168,8 +222,10 @@ def _board_from_url(url: str) -> tuple[str, str] | None:
         return "greenhouse", path_parts[0]
     if hostname == "jobs.lever.co" and path_parts:
         return "lever", path_parts[0]
-    if hostname == "jobs.ashbyhq.com" and path_parts:
+    if hostname in {"jobs.ashbyhq.com", "ashbyhq.com"} and path_parts:
         return "ashby", path_parts[0]
+    if hostname.endswith(".ashbyhq.com") and hostname != "jobs.ashbyhq.com":
+        return "ashby", hostname.removesuffix(".ashbyhq.com")
     if hostname == "jobs.smartrecruiters.com" and path_parts:
         return "smartrecruiters", path_parts[0]
     if hostname == "apply.workable.com" and path_parts:
@@ -181,6 +237,14 @@ def _board_from_url(url: str) -> tuple[str, str] | None:
     if hostname.endswith(".myworkdayjobs.com") and len(path_parts) >= 2:
         tenant = hostname.split(".", 1)[0]
         return "workday", f"{tenant}|{hostname}|{path_parts[1]}|{path_parts[0]}"
+    if hostname.endswith(".keka.com") and hostname != "www.keka.com":
+        return "keka", hostname.removesuffix(".keka.com")
+    if hostname.endswith(".freshteam.com") and hostname != "www.freshteam.com":
+        return "freshteam", hostname.removesuffix(".freshteam.com")
+    if hostname.endswith(".zohorecruit.com") or hostname.endswith(".zohorecruit.in"):
+        tld = "in" if hostname.endswith(".zohorecruit.in") else "com"
+        sub = hostname.split(".")[0]
+        return "zohorecruit", f"{sub}|{tld}"
     return None
 
 
@@ -196,7 +260,7 @@ def _links_from_page(page_url: str, html: str) -> tuple[list[str], list[str]]:
     soup = BeautifulSoup(html, "html.parser")
     for anchor in soup.find_all("a", href=True):
         link_url = urljoin(page_url, anchor["href"])
-        if urlsplit(link_url).scheme not in {"http", "https"}:
+        if urlsplit(link_url).scheme not in {"http", "https"} or is_aggregator_domain(link_url):
             continue
         if _board_from_url(link_url):
             ats_links.append(link_url)
@@ -210,7 +274,7 @@ def _job_links_from_page(page_url: str, html: str) -> list[str]:
     links = []
     for anchor in soup.find_all("a", href=True):
         link_url = urljoin(page_url, anchor["href"])
-        if urlsplit(link_url).scheme not in {"http", "https"} or not _same_company_host(page_url, link_url):
+        if urlsplit(link_url).scheme not in {"http", "https"} or is_aggregator_domain(link_url) or not _same_company_host(page_url, link_url):
             continue
         label = f"{anchor.get_text(' ', strip=True)} {urlsplit(link_url).path}"
         if re.search(r"\b(job|position|opening|intern|role)\b", label, re.I):
@@ -238,6 +302,22 @@ def _schema_text(value: object) -> str:
     if isinstance(value, list):
         return " ".join(_schema_text(part) for part in value)
     return ""
+
+
+def _parse_posted_at(value: object) -> datetime | None:
+    if isinstance(value, (int, float)):
+        timestamp = value / 1000 if value > 100_000_000_000 else value
+        try:
+            return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
 
 
 def _schema_location(posting: dict) -> tuple[str | None, bool]:
@@ -284,9 +364,11 @@ def _normalize_schema_jobs(company: str, page_url: str, source_url: str, html: s
             if not isinstance(apply_url, str) or not apply_url.strip():
                 apply_url = page_url
             apply_url = urljoin(page_url, apply_url)
-            if not role_type or urlsplit(apply_url).scheme not in {"http", "https"}:
+            if not role_type or urlsplit(apply_url).scheme not in {"http", "https"} or is_aggregator_domain(apply_url):
                 continue
             location, remote = _schema_location(posting)
+            remote = remote or _is_remote(location)
+            description = _schema_text(posting.get("description"))[:20_000] or None
             results.append(ExtractedJob(
                 title=title.strip()[:500],
                 company=company[:300],
@@ -296,6 +378,8 @@ def _normalize_schema_jobs(company: str, page_url: str, source_url: str, html: s
                 role_type=role_type,
                 apply_url=canonical_url(apply_url),
                 source_url=canonical_url(source_url),
+                description=description,
+                posted_at=_parse_posted_at(posting.get("datePosted")),
             ))
     return results
 
@@ -355,6 +439,46 @@ async def _find_company_board(client: httpx.AsyncClient, name: str, website: str
     return None
 
 
+async def _discover_company_boards(
+    client: httpx.AsyncClient,
+    companies: list[dict[str, str | None]],
+) -> list[CompanyBoardDiscovery]:
+    semaphore = asyncio.Semaphore(5)
+
+    async def discover(company: dict[str, str | None]) -> CompanyBoardDiscovery:
+        name = company["company_name"] or ""
+        careers_url = company.get("careers_url")
+        website_url = company.get("website_url")
+        if careers_url:
+            ats_board = _board_from_url(careers_url)
+            if ats_board:
+                platform, slug = ats_board
+                return CompanyBoardDiscovery(
+                    company_name=name,
+                    board=DiscoveredBoard(name, platform, slug, careers_url),
+                    status="board_found",
+                )
+            if website_url and _same_company_host(website_url, careers_url):
+                return CompanyBoardDiscovery(
+                    company_name=name,
+                    board=DiscoveredBoard(name, "schema", urlsplit(website_url).hostname or website_url, careers_url),
+                    status="career_page_found",
+                )
+        if not website_url:
+            return CompanyBoardDiscovery(name, None, "needs_official_url")
+        async with semaphore:
+            board = await _find_company_board(client, name, website_url)
+        return CompanyBoardDiscovery(name, board, "board_found" if board else "no_supported_careers")
+
+    return await asyncio.gather(*(discover(company) for company in companies))
+
+
+async def discover_company_boards(companies: list[dict[str, str | None]]) -> list[CompanyBoardDiscovery]:
+    headers = {"User-Agent": "InternRoleFinderBot/1.0 (+company-source-indexer)"}
+    async with httpx.AsyncClient(timeout=25, follow_redirects=True, headers=headers) as client:
+        return await _discover_company_boards(client, companies)
+
+
 async def discover_indian_startup_boards() -> list[DiscoveredBoard]:
     settings = get_settings()
     api_key = settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else ""
@@ -407,6 +531,8 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                 _country_label(item.get("location"), item.get("location", {}).get("name") if isinstance(item.get("location"), dict) else None),
                 _is_remote(item.get("location", {}).get("name") if isinstance(item.get("location"), dict) else item.get("location")),
                 "",
+                item.get("content"),
+                item.get("updated_at") or item.get("created_at"),
             )
             for item in items
             if item.get("id")
@@ -421,6 +547,8 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                 _country_label(None, item.get("categories", {}).get("location") if isinstance(item.get("categories"), dict) else None),
                 _is_remote(item.get("categories", {}).get("location") if isinstance(item.get("categories"), dict) else None, workplace_type=item.get("workplaceType")),
                 _role_context(item.get("categories", {}).get("commitment"), item.get("categories", {}).get("team")) if isinstance(item.get("categories"), dict) else "",
+                item.get("descriptionPlain") or item.get("description"),
+                item.get("createdAt"),
             )
             for item in items
         )
@@ -434,6 +562,8 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                 _country_label(None, item.get("location")),
                 _is_remote(item.get("location"), remote_flag=item.get("isRemote") is True),
                 _role_context(item.get("employmentType"), item.get("department")),
+                item.get("descriptionPlain") or item.get("descriptionHtml") or item.get("description"),
+                item.get("publishedAt"),
             )
             for item in items
         )
@@ -459,6 +589,8 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                     item.get("typeOfEmployment", {}).get("label") if isinstance(item.get("typeOfEmployment"), dict) else None,
                     item.get("experienceLevel", {}).get("label") if isinstance(item.get("experienceLevel"), dict) else None,
                 ),
+                item.get("jobAd"),
+                item.get("releasedDate"),
             )
             for item in items
         )
@@ -475,6 +607,8 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                 _country_label(item.get("country")),
                 _is_remote(None, remote_flag=item.get("telecommuting") is True, workplace_type=item.get("workplace_type")),
                 _role_context(item.get("employment_type"), item.get("experience"), item.get("workplace_type")),
+                item.get("description"),
+                item.get("created_at") or item.get("published_on"),
             )
             for item in items
         )
@@ -492,6 +626,8 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                 _country_label(item.get("country") or item.get("country_code"), item.get("location")),
                 _is_remote(item.get("location"), remote_flag=item.get("remote") is True),
                 _role_context(item.get("employment_type_code"), item.get("experience_code")),
+                item.get("description"),
+                item.get("created_at"),
             )
             for item in items
         )
@@ -511,19 +647,85 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                     " ".join(value for value in item.get("bulletFields", []) if isinstance(value, str))
                     if isinstance(item.get("bulletFields"), list) else "",
                 ),
+                item.get("description") or item.get("bulletFields"),
+                item.get("postedOn"),
             )
             for item in items
+        )
+    elif platform == "freshteam":
+        items = payload if isinstance(payload, list) else payload.get("jobs", []) if isinstance(payload, dict) else []
+        mappings = (
+            (
+                item.get("title", ""),
+                item.get("url") or f"https://{slug}.freshteam.com/jobs/{item.get('id')}",
+                _location_label(item.get("branch") or item.get("location")),
+                _country_label(None, item.get("branch") or item.get("location")),
+                _is_remote(item.get("branch") or item.get("location"), remote_flag=item.get("remote") is True),
+                _role_context(item.get("job_type"), item.get("department")),
+                item.get("description"),
+                item.get("created_at") or item.get("published_at"),
+            )
+            for item in items
+            if isinstance(item, dict)
+        )
+    elif platform == "keka":
+        items = payload if isinstance(payload, list) else payload.get("jobPostings") or payload.get("data") or [] if isinstance(payload, dict) else []
+        mappings = (
+            (
+                item.get("title") or item.get("jobTitle", ""),
+                item.get("applyUrl") or item.get("url") or f"https://{slug}.keka.com/careers/jobdetails/{item.get('id') or item.get('jobId')}",
+                _location_label(item.get("location") or item.get("jobLocation")),
+                _country_label(None, item.get("location") or item.get("jobLocation")),
+                _is_remote(item.get("location") or item.get("jobLocation"), remote_flag=item.get("isRemote") is True),
+                _role_context(item.get("jobType"), item.get("department")),
+                item.get("description") or item.get("jobDescription"),
+                item.get("postedDate") or item.get("createdDate"),
+            )
+            for item in items
+            if isinstance(item, dict)
+        )
+    elif platform == "zohorecruit":
+        items = payload.get("data", []) if isinstance(payload, dict) else payload if isinstance(payload, list) else []
+        parts = slug.split("|", 1)
+        sub = parts[0]
+        tld = parts[1] if len(parts) > 1 else "in"
+        mappings = (
+            (
+                item.get("Job_Title") or item.get("title", ""),
+                item.get("Apply_Url") or item.get("url") or f"https://{sub}.zohorecruit.{tld}/jobs/Careers/{item.get('id')}",
+                _location_label(item.get("City") or item.get("location")),
+                _country_label(item.get("Country"), item.get("City") or item.get("location")),
+                _is_remote(item.get("City") or item.get("location"), remote_flag=item.get("Remote_Job") is True),
+                _role_context(item.get("Job_Type"), item.get("Industry")),
+                item.get("Job_Description") or item.get("description"),
+                item.get("Date_Opened") or item.get("created_time"),
+            )
+            for item in items
+            if isinstance(item, dict)
         )
     else:
         return []
 
     results = []
-    for title, apply_url, location, country, is_remote, role_context in mappings:
+    for title, apply_url, location, country, is_remote, role_context, description_value, posted_at_value in mappings:
         if not isinstance(title, str) or not isinstance(apply_url, str):
+            continue
+        if is_aggregator_domain(apply_url):
             continue
         role_type = classify_role(title, role_context)
         if role_type and apply_url.startswith(("http://", "https://")):
-            results.append(ExtractedJob(title=title[:500], company=company[:300], location=location, country=country, is_remote=is_remote, role_type=role_type, apply_url=canonical_url(apply_url), source_url=source_url))
+            results.append(ExtractedJob(
+                title=title[:500],
+                company=company[:300],
+                location=location,
+                country=country,
+                is_remote=is_remote,
+                role_type=role_type,
+                apply_url=canonical_url(apply_url),
+                source_url=source_url,
+                description=_schema_text(description_value)[:20_000] or None,
+                posted_at=_parse_posted_at(posted_at_value),
+            ))
     return results
 
 
@@ -549,6 +751,30 @@ async def discover_jobs_from_public_ats(extra_boards: list[dict[str, str]] | Non
                     return await _fetch_schema_board(client, board)
                 source_url = _board_url(platform, slug)
                 try:
+                    if platform == "zohorecruit":
+                        parts = slug.split("|", 1)
+                        sub = parts[0]
+                        tld = parts[1] if len(parts) > 1 else "in"
+                        careers_url = f"https://{sub}.zohorecruit.{tld}/jobs/Careers"
+                        return await _fetch_schema_board(client, {"name": company, "careers_url": careers_url})
+                    if platform == "keka":
+                        try:
+                            response = await client.get(source_url)
+                            if response.status_code == 200 and "application/json" in response.headers.get("content-type", ""):
+                                return _normalize_board_jobs(company, platform, slug, source_url, response.json())
+                        except (httpx.HTTPError, ValueError):
+                            pass
+                        careers_url = f"https://{slug}.keka.com/careers/"
+                        return await _fetch_schema_board(client, {"name": company, "careers_url": careers_url})
+                    if platform == "freshteam":
+                        try:
+                            response = await client.get(source_url)
+                            if response.status_code == 200:
+                                return _normalize_board_jobs(company, platform, slug, source_url, response.json())
+                        except (httpx.HTTPError, ValueError):
+                            pass
+                        careers_url = f"https://{slug}.freshteam.com/jobs"
+                        return await _fetch_schema_board(client, {"name": company, "careers_url": careers_url})
                     if platform == "workday":
                         jobs: list[ExtractedJob] = []
                         offset = 0
@@ -596,18 +822,20 @@ async def discover_jobs_from_public_ats(extra_boards: list[dict[str, str]] | Non
     return list(jobs.values())
 
 
-async def is_active(url: str) -> bool:
+def _active_from_response(status_code: int, text: str) -> bool | None:
+    if status_code in (404, 410):
+        return False
+    if status_code != 200:
+        return None
+    return not any(term in text.lower() for term in CLOSED_TERMS)
+
+
+async def is_active(url: str) -> bool | None:
+    if is_aggregator_domain(url):
+        return False
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers={"User-Agent": "InternRoleFinderBot/1.0 (+public-link-indexer)"}) as client:
             response = await client.get(url)
     except httpx.HTTPError:
-        # A request failure is not proof that a job expired; the worker leaves it for later retry.
-        return True
-    if response.status_code in (404, 410):
-        return False
-    # Rate limits, server errors, and blocked/unauthenticated pages are not evidence
-    # that an application closed. Keep the record for a future scheduled retry.
-    if response.status_code != 200:
-        return True
-    text = response.text.lower()
-    return response.status_code < 400 and not any(term in text for term in CLOSED_TERMS)
+        return None
+    return _active_from_response(response.status_code, response.text)

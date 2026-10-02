@@ -6,35 +6,42 @@ An automated directory of verified software internship and fresher application l
 
 ## Features
 
-- **Public ATS Feed Discovery**: Direct, zero-credential ingestion from major ATS platforms:
-  - **Greenhouse** (`boards-api.greenhouse.io`)
-  - **Lever** (`api.lever.co`)
-  - **Ashby** (`api.ashbyhq.com`)
+- **Remote-Only Default Filter**:
+  - Remote jobs are filtered by default across the API and frontend (`remote_only=true`).
+  - On-site / hybrid roles remain accessible via a one-click toggle or query parameter.
+- **Public ATS & Platform Discovery**: Direct ingestion from verified official employer portals:
+  - **Greenhouse** (`boards-api.greenhouse.io`, `job-boards.greenhouse.io`)
+  - **Lever** (`api.lever.co`, `jobs.lever.co`)
+  - **Ashby** (`api.ashbyhq.com`, `jobs.ashbyhq.com`)
+  - **Keka** (`*.keka.com/careers`)
+  - **Freshteam** (`*.freshteam.com/jobs`)
+  - **Zoho Recruit** (`*.zohorecruit.com`, `*.zohorecruit.in`)
   - **SmartRecruiters** (`api.smartrecruiters.com`)
-  - **Workable** (`www.workable.com/api/accounts`)
+  - **Workable** (`www.workable.com/api/accounts`, `apply.workable.com`)
   - **Recruitee** (`{company}.recruitee.com/api/offers`)
   - **Workday** (public `myworkdayjobs.com` career boards)
   - **Official career pages** that publish Schema.org `JobPosting` JSON-LD
+  - **Strict Aggregator & Stale Rejection**: Automatically rejects non-direct aggregators (LinkedIn, Indeed, Internshala, Wellfound, Naukri, Cutshort, etc.) and auto-prunes stale or expired postings.
+- **Verified Coverage for 120 Indian & Global Tech Companies**:
+  - Full verified website and official career portal coverage for all 120 company seeds.
+- **Alerts for Newly Verified Matching Roles**:
+  - Dedicated `/api/jobs/alerts` endpoint returning roles discovered and verified within the last 24 hours.
+  - In-app notification bell with unread badge count, instant alert preview modal, and optional browser Web Notification API integration.
+- **Skills, Location & Date Fit Filters with Fit Ranking**:
+  - Multi-skill filtering (Python, React, TypeScript, Go, PyTorch, LLMs, Docker, etc.) plus custom skill tag inputs.
+  - Location eligibility selector (Any Remote, India Remote & Hubs, International).
+  - Internship date & term selector (Summer 2026, Immediate / Spring, Fall 2026, Winter 2027).
+  - Dynamic fit scoring algorithm computing keyword relevance, location match, and term timing, ranking roles by fit percentage (`⚡ 96% Fit`).
+- **Enhanced Application Tracker & Interview Stages (`/applied`)**:
+  - Comprehensive interview pipeline tracking across 8 distinct stages: `Applied`, `Online Assessment (OA)`, `Recruiter Screen`, `Technical Round`, `Final Round`, `Offer Received 🎉`, `Not Selected`, and `Withdrawn`.
+  - Follow-up reminders with overdue alert banner, custom date-picker, and quick reminder presets (`+3d`, `+7d`, `+14d`).
+  - One-click copy for professional follow-up email drafts customized to company, role, and submission date.
+  - Stage feedback & interview prep notes saved persistently in local storage.
 - **Intelligent Role Classification**:
   - **SDE**: Software Engineering, Full-Stack, Frontend, Backend, Web Development, DevOps, Platform Engineering, Site Reliability, Data Engineering, and Mobile Engineering.
   - **AI**: Generative AI, LLMs, Machine Learning, Deep Learning, Computer Vision, NLP, Data Science, Robotics, and Forward Deployed Engineering.
   - Only explicit software/AI internship or fresher postings are eligible; hardware, HR, process-planning, and other non-software postings are excluded.
   - Automatic exclusion of senior, staff, lead, principal, and manager roles.
-- **Geographic Normalization & Prioritized Ranking**:
-  - Prioritizes Indian early-stage product startup listings discovered from verified company career pages over MNC and IT services listings.
-  - Automatically identifies Indian tech hubs (Bengaluru/Bangalore, Hyderabad, Mumbai, Delhi, Gurgaon/Gurugram, Noida, Pune, Chennai, Kolkata, Ahmedabad, Jaipur, Kochi, Indore, Thiruvananthapuram) as India.
-  - Prioritizes results in the order:
-    1. **Discovered Indian startup roles**, with India Remote first, then India Onsite / Hybrid
-    2. **Other roles**, with India Remote first, then India Onsite / Hybrid, International Remote, and Other International
-- **Automated Verification & Self-Cleaning**:
-  - Background worker periodically visits application links to check validity.
-  - Detects closed or expired postings (e.g., *"job is no longer available"*, *"position has been filled"*, 404 responses) and automatically prunes them from the database.
-- **Applied Jobs Tracker**:
-  - Mark jobs as **Applied** directly within the web interface.
-  - Persisted in the browser via `localStorage` with a dedicated **Applied internships** view (`/applied`).
-- **Optional Gemini-Powered Indian Startup Discovery**:
-  - Configure `GEMINI_API_KEY` to discover emerging Indian tech companies.
-  - Automatically resolves official careers pages and indexes supported ATS feeds or structured `JobPosting` data.
 
 ---
 
@@ -104,10 +111,10 @@ On startup, database tables and enum values are created automatically, and an in
 | `REDIS_URL` | `redis://redis:6379/0` | Redis broker and backend URL |
 | `FRONTEND_ORIGIN` | `http://localhost:3000` | Allowed CORS origin for the FastAPI backend |
 | `PUBLIC_ATS_COMPANY_CATALOG_URL` | `https://raw.githubusercontent.com/ConorsCode/open-jobs-data/main/companies.json` | Remote JSON catalog of company ATS boards |
-| `GEMINI_API_KEY` | *(empty)* | Optional Google Gemini API key for Indian startup discovery |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model used for startup discovery prompts |
-| `STARTUP_DISCOVERY_LIMIT` | `40` | Maximum candidate startups processed per discovery run |
-| `STARTUP_DISCOVERY_INTERVAL_HOURS` | `168` | Interval between Gemini discovery cycles (default: 7 days) |
+| `GEMINI_API_KEY` | *(empty)* | Optional key for the legacy manual Gemini discovery task; curated source discovery does not require it |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Model used only by the legacy manual Gemini discovery task |
+| `STARTUP_DISCOVERY_LIMIT` | `40` | Maximum candidates used only by the legacy manual Gemini discovery task |
+| `STARTUP_DISCOVERY_INTERVAL_HOURS` | `168` | Interval between curated company-source discovery cycles (default: 7 days) |
 | `CRAWL_INTERVAL_MINUTES` | `360` | Interval between job-board crawl cycles (default: 6 hours) |
 | `VERIFY_INTERVAL_MINUTES` | `180` | Interval between link health checks (default: 3 hours) |
 | `VERIFICATION_MAX_AGE_HOURS` | `24` | Maximum hours a job is retained without re-verification |
@@ -117,10 +124,15 @@ On startup, database tables and enum values are created automatically, and an in
 ## API Endpoints
 
 ### `GET /api/jobs`
-Retrieve a paginated list of active, verified job listings.
+Retrieve software developer internships that were confirmed active within the configured verification window. Remote roles are filtered by default; listings older than 24 hours are omitted by default.
 
 **Query Parameters:**
-- `role_type` *(string, optional)*: Filter by `sde` or `ai` (defaults to `sde`).
+- `role_type` *(string, optional, default: "sde")*: Filter by `sde` or `ai`.
+- `remote_only` *(bool, optional, default: true)*: Filter to remote opportunities only.
+- `skills` *(string, optional)*: Comma-separated skill keywords to match (e.g. `python,react,pytorch`).
+- `location_eligibility` *(string, optional)*: Filter by location preference (`any_remote`, `india`, `international`).
+- `internship_dates` *(string, optional)*: Filter by target term (`summer_2026`, `immediate`, `fall_2026`, `winter_2027`).
+- `sort_by` *(string, optional, default: "priority")*: Sort order (`priority`, `fit`, `freshness`).
 - `page` *(int, optional, default: 1)*: 1-indexed page number.
 - `page_size` *(int, optional, default: 100, max: 100)*: Items per page.
 
@@ -130,15 +142,17 @@ Retrieve a paginated list of active, verified job listings.
   "items": [
     {
       "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-      "title": "Machine Learning Intern",
-      "company": "Example AI",
+      "title": "Software Engineer Intern",
+      "company": "Example Company",
       "location": "Bengaluru, India",
       "country": "India",
-      "is_remote": false,
-      "role_type": "ai",
+      "is_remote": true,
+      "role_type": "sde",
       "apply_url": "https://boards.greenhouse.io/exampleai/jobs/12345",
       "first_seen_at": "2026-10-01T12:00:00Z",
-      "last_checked_at": "2026-10-01T12:30:00Z"
+      "last_checked_at": "2026-10-01T12:30:00Z",
+      "fit_score": 95,
+      "matched_skills": ["python", "react"]
     }
   ],
   "page": 1,
@@ -147,6 +161,28 @@ Retrieve a paginated list of active, verified job listings.
   "total_pages": 3
 }
 ```
+
+### `GET /api/jobs/alerts`
+Returns newly verified matching roles discovered within a recent time window (default: past 24 hours), enabling fast notification and early applications.
+
+**Query Parameters:**
+- `role_type` *(string, optional, default: "sde")*: Filter by `sde` or `ai`.
+- `remote_only` *(bool, optional, default: true)*: Remote-only alert toggle.
+- `hours` *(int, optional, default: 24, min: 1, max: 168)*: Hours window.
+
+**Response Schema (`JobAlertsOut`):**
+```json
+{
+  "items": [...],
+  "total_new": 6,
+  "last_checked_at": "2026-10-02T12:00:00Z"
+}
+```
+
+### `GET /api/companies/seeds`
+View the curated company source registry, including official website/careers URLs and the latest crawl status. Names without a verified official website remain listed for review but are not crawled.
+
+Each source status is one of `queued`, `board_found`, `career_page_found`, `no_supported_careers`, or `needs_official_url`.
 
 ### `GET /api/jobs/summary`
 Returns counts of active verified listings by role type.
