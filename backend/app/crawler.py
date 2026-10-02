@@ -69,6 +69,7 @@ class ExtractedJob:
     source_url: str
     description: str | None = None
     posted_at: datetime | None = None
+    is_startup: bool = False
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,68 @@ class CompanyBoardDiscovery:
 
 
 CAREERS_LINK_PATTERN = re.compile(r"\b(career|careers|jobs|job openings|open positions|join our team)\b", re.I)
+
+STARTUP_ATS_DOMAINS = (
+    "ashbyhq.com",
+    "lever.co",
+    "greenhouse.io",
+    "workable.com",
+    "recruitee.com",
+    "keka.com",
+    "freshteam.com",
+    "zohorecruit.com",
+    "zohorecruit.in",
+)
+
+ENTERPRISE_MEGA_CORPS = {
+    "amazon", "aws", "microsoft", "google", "alphabet", "meta", "facebook", "apple",
+    "ibm", "oracle", "intel", "cisco", "sap", "salesforce", "dell", "hp", "hewlett packard",
+    "tcs", "tata consultancy services", "infosys", "wipro", "cognizant", "accenture",
+    "capgemini", "hcl tech", "hcl technologies", "tech mahindra", "deloitte", "pwc", "ey", "kpmg",
+    "walmart", "target", "jpmorgan", "jpmorgan chase", "goldman sachs", "morgan stanley",
+    "bank of america", "wells fargo", "citigroup", "general motors", "ford", "boeing",
+    "lockheed martin", "siemens", "bosch", "bosch group",
+}
+
+
+def is_startup_company(company: str | None, apply_url: str | None = None, source_url: str | None = None) -> bool:
+    comp_lower = (company or "").lower().strip()
+    if any(mega in comp_lower for mega in ENTERPRISE_MEGA_CORPS):
+        return False
+    from app.indian_jobs_data import INDIAN_COMPANIES_LIST
+    if any(comp_lower == c.lower() for c in INDIAN_COMPANIES_LIST):
+        return True
+    url = (apply_url or source_url or "").lower()
+    if any(domain in url for domain in STARTUP_ATS_DOMAINS):
+        return True
+    return False
+
+
+def get_ats_name(url: str | None) -> str:
+    if not url:
+        return "Direct"
+    u = url.lower()
+    if "ashby" in u:
+        return "Ashby"
+    if "greenhouse" in u:
+        return "Greenhouse"
+    if "lever" in u:
+        return "Lever"
+    if "workable" in u:
+        return "Workable"
+    if "recruitee" in u:
+        return "Recruitee"
+    if "keka" in u:
+        return "Keka"
+    if "freshteam" in u:
+        return "Freshteam"
+    if "zohorecruit" in u:
+        return "Zoho Recruit"
+    if "workday" in u:
+        return "Workday"
+    if "smartrecruiters" in u:
+        return "SmartRecruiters"
+    return "Direct Portal"
 
 
 def canonical_url(url: str) -> str:
@@ -714,12 +777,14 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
             continue
         role_type = classify_role(title, role_context)
         if role_type and apply_url.startswith(("http://", "https://")):
+            is_startup = is_startup_company(company, apply_url, source_url)
             results.append(ExtractedJob(
                 title=title[:500],
                 company=company[:300],
                 location=location,
                 country=country,
                 is_remote=is_remote,
+                is_startup=is_startup,
                 role_type=role_type,
                 apply_url=canonical_url(apply_url),
                 source_url=source_url,
@@ -839,3 +904,60 @@ async def is_active(url: str) -> bool | None:
     except httpx.HTTPError:
         return None
     return _active_from_response(response.status_code, response.text)
+
+
+VERIFIED_LISTINGS_URL = "https://raw.githubusercontent.com/SimplifyJobs/Summer2026-Internships/dev/.github/scripts/listings.json"
+
+
+async def discover_jobs_from_verified_listings(limit: int = 500) -> list[ExtractedJob]:
+    """Fetch active software internships from verified direct employer links."""
+    headers = {"User-Agent": "InternRoleFinderBot/1.0 (+verified-indexer)"}
+    try:
+        async with httpx.AsyncClient(timeout=25, follow_redirects=True, headers=headers) as client:
+            response = await client.get(VERIFIED_LISTINGS_URL)
+            if response.status_code != 200:
+                return []
+            data = response.json()
+    except Exception:
+        return []
+
+    jobs: list[ExtractedJob] = []
+    for item in data:
+        if not item.get("active", True):
+            continue
+        url = item.get("url", "")
+        if not url or is_aggregator_domain(url) or not url.startswith(("http://", "https://")):
+            continue
+        title = item.get("title", "")
+        role = classify_role(title)
+        if not role:
+            continue
+        locs = item.get("locations") or []
+        loc_str = ", ".join(locs) if isinstance(locs, list) else str(locs)
+        is_rem = _is_remote(loc_str) or "remote" in title.lower()
+        country = _country_label(None, loc_str)
+        posted_at = None
+        date_posted = item.get("date_posted")
+        if isinstance(date_posted, (int, float)) and date_posted > 0:
+            try:
+                posted_at = datetime.fromtimestamp(date_posted, tz=timezone.utc)
+            except Exception:
+                pass
+
+        is_startup = is_startup_company(item.get("company_name"), url, url)
+        jobs.append(ExtractedJob(
+            title=title[:500],
+            company=(item.get("company_name") or "")[:300] or None,
+            location=loc_str[:300] or ("Remote" if is_rem else None),
+            country=country,
+            is_remote=is_rem,
+            is_startup=is_startup,
+            role_type=role,
+            apply_url=canonical_url(url),
+            source_url=canonical_url(url),
+            posted_at=posted_at,
+        ))
+        if len(jobs) >= limit:
+            break
+
+    return jobs

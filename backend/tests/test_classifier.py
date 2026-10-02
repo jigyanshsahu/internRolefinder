@@ -3,8 +3,29 @@ from app.classifier import classify_role
 from app.types import RoleType
 
 
-def test_classifies_frontend_internship_as_sde():
-    assert classify_role("Frontend Engineering Intern") == RoleType.sde
+def test_classifies_frontend_internship():
+    assert classify_role("Frontend Engineering Intern") == RoleType.frontend
+    assert classify_role("Software Engineer Intern, Frontend") == RoleType.frontend
+    assert classify_role("Web Engineer Intern") == RoleType.frontend
+
+
+def test_classifies_backend_internship():
+    assert classify_role("Backend Engineering Intern") == RoleType.backend
+    assert classify_role("Software Developer Intern, Backend") == RoleType.backend
+    assert classify_role("Software Engineer Intern - Infrastructure") == RoleType.backend
+
+
+def test_classifies_fullstack_internship():
+    assert classify_role("Fullstack Engineer Intern") == RoleType.full_stack
+    assert classify_role("Full-Stack Developer Intern") == RoleType.full_stack
+    assert classify_role("Software Engineer Intern, Fullstack (Summer 2027)") == RoleType.full_stack
+
+
+def test_classifies_sde_internship():
+    assert classify_role("Software Development Engineer Intern") == RoleType.sde
+    assert classify_role("Software Engineer Intern") == RoleType.sde
+    assert classify_role("Forward Deployed Software Engineer, Internship") == RoleType.sde
+    assert classify_role("Software Engineer Intern, AI") == RoleType.sde
 
 
 def test_rejects_senior_role():
@@ -15,23 +36,11 @@ def test_rejects_senior_internship():
     assert classify_role("Senior Backend Engineer Intern") is None
 
 
-def test_classifies_sde():
-    assert classify_role("Software Development Engineer Intern") == RoleType.sde
-
-
-def test_classifies_software_engineering_internship_in_ai_area():
-    assert classify_role("Software Engineer Intern, AI") == RoleType.ai
-
-
-def test_rejects_non_developer_ai_internships():
+def test_rejects_non_developer_internships():
     assert classify_role("Machine Learning Intern") is None
     assert classify_role("Data Scientist Intern") is None
     assert classify_role("AI Intern") is None
     assert classify_role("Machine Learning Engineer Intern") is None
-
-
-def test_classifies_forward_deployed_engineering_as_ai():
-    assert classify_role("Forward Deployed Software Engineer, Internship") == RoleType.sde
 
 
 def test_rejects_non_software_fresher():

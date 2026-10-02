@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 export const jobsPerPage = 20;
-export type JobCategory = "sde" | "ai";
+export type JobCategory = "sde" | "frontend" | "backend" | "full_stack";
 
 export type Job = {
   id: string;
@@ -12,14 +12,14 @@ export type Job = {
   location: string | null;
   country: string | null;
   is_remote: boolean;
+  is_startup?: boolean;
+  ats_type?: string | null;
   role_type: JobCategory;
   apply_url: string;
   description?: string | null;
   first_seen_at?: string;
   last_checked_at?: string;
   posted_at?: string | null;
-  fit_score?: number | null;
-  matched_skills?: string[];
 };
 
 type JobListProps = {
@@ -31,16 +31,20 @@ type JobListProps = {
   actionLabel: string;
   disableAppliedAction: boolean;
   onAction: (job: Job) => void;
-  activeSkills?: string[];
 };
 
-const label = (role: JobCategory) => ({ sde: "SDE", ai: "AI" })[role];
+const ROLE_BADGES: Record<JobCategory, { label: string; badgeClass: string }> = {
+  sde: { label: "SDE Intern", badgeClass: "badge-sde" },
+  frontend: { label: "Frontend Intern", badgeClass: "badge-frontend" },
+  backend: { label: "Backend Intern", badgeClass: "badge-backend" },
+  full_stack: { label: "Fullstack Intern", badgeClass: "badge-fullstack" },
+};
 
 function isNewlyVerified(dateString?: string): boolean {
   if (!dateString) return false;
   try {
     const diffHours = (Date.now() - new Date(dateString).getTime()) / (1000 * 60 * 60);
-    return diffHours >= 0 && diffHours <= 36;
+    return diffHours >= 0 && diffHours <= 48;
   } catch {
     return false;
   }
@@ -55,12 +59,14 @@ export default function JobList({
   actionLabel,
   disableAppliedAction,
   onAction,
-  activeSkills = [],
 }: JobListProps) {
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
 
   const firstVisiblePage = Math.max(1, Math.min(page - 2, pageCount - 4));
-  const visiblePages = Array.from({ length: Math.min(5, pageCount) }, (_, index) => firstVisiblePage + index);
+  const visiblePages = Array.from(
+    { length: Math.min(5, pageCount) },
+    (_, index) => firstVisiblePage + index
+  );
 
   return (
     <div className="job-list-container">
@@ -68,23 +74,28 @@ export default function JobList({
         const applied = appliedIds.has(job.id);
         const isNew = isNewlyVerified(job.first_seen_at);
         const isExpanded = expandedJobId === job.id;
+        const roleInfo = ROLE_BADGES[job.role_type] ?? {
+          label: "SDE Intern",
+          badgeClass: "badge-sde",
+        };
 
         const locationLabel = job.is_remote
           ? job.location?.toLowerCase().includes("remote")
             ? job.location
             : `Remote${job.location ? ` · ${job.location}` : job.country ? ` · ${job.country}` : ""}`
-          : job.location ?? job.country;
-
-        const fit = job.fit_score ?? null;
-        const fitColorClass =
-          fit && fit >= 85
-            ? "fit-high"
-            : fit && fit >= 65
-            ? "fit-medium"
-            : "fit-standard";
+          : job.location;
+        const isIndian =
+          job.country === "India" ||
+          Boolean(
+            job.location &&
+              /\b(india|bengaluru|bangalore|hyderabad|mumbai|delhi|gurgaon|gurugram|noida|pune|chennai|kolkata|ahmedabad|jaipur|kochi|indore)\b/i.test(
+                job.location
+              ) &&
+              !job.location.toLowerCase().includes("indianapolis")
+          );
 
         return (
-          <article className={`job-card ${applied ? "job-applied" : ""}`} key={job.id}>
+          <article className={`job-card ${applied ? "job-applied" : ""} ${job.is_startup ? "card-startup" : ""}`} key={job.id}>
             <div className="job-main-info">
               <div className="job-header-row">
                 <div className="job-title-group">
@@ -102,30 +113,25 @@ export default function JobList({
                 </div>
 
                 <div className="badges-group">
-                  {isNew && <span className="badge badge-new">✨ Newly Verified</span>}
-                  {job.is_remote && <span className="badge badge-remote">Remote</span>}
-                  <span className={`badge badge-role ${job.role_type}`}>{label(job.role_type)}</span>
-                  {typeof fit === "number" && (
-                    <span className={`badge badge-fit ${fitColorClass}`} title="Calculated fit score">
-                      ⚡ {fit}% Fit
+                  {job.is_startup && (
+                    <span className="badge badge-startup" title="High-growth startup with high interview callback rate">
+                      🚀 Startup · High Callback
                     </span>
                   )}
+                  {isIndian && <span className="badge badge-india">🇮🇳 India</span>}
+                  {job.ats_type && (
+                    <span className="badge badge-ats" title="Direct employer ATS form - verified authentic link">
+                      ✓ {job.ats_type}
+                    </span>
+                  )}
+                  {isNew && <span className="badge badge-new">✨ New</span>}
+                  {job.is_remote && <span className="badge badge-remote">Remote</span>}
+                  <span className={`badge badge-role ${roleInfo.badgeClass}`}>
+                    {roleInfo.label}
+                  </span>
                 </div>
               </div>
 
-              {/* Matched skills chips */}
-              {job.matched_skills && job.matched_skills.length > 0 && (
-                <div className="matched-skills-row">
-                  <span className="skills-label">Skill matches:</span>
-                  {job.matched_skills.map((skill) => (
-                    <span key={skill} className="skill-pill matched">
-                      ✓ {skill}
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              {/* Description preview toggle */}
               {job.description && (
                 <div className="job-desc-section">
                   <button
@@ -138,7 +144,7 @@ export default function JobList({
                   </button>
                   {isExpanded && (
                     <div className="job-expanded-desc">
-                      <p>{job.description.slice(0, 700)}...</p>
+                      <p>{job.description.slice(0, 800)}...</p>
                     </div>
                   )}
                 </div>
@@ -151,11 +157,12 @@ export default function JobList({
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn-apply"
-                title="Open employer application"
+                title="Open employer application directly on ATS"
               >
-                Apply <span aria-hidden="true">↗</span>
+                Apply Direct <span aria-hidden="true">↗</span>
               </a>
               <button
+                type="button"
                 className={`application-action ${applied ? "btn-applied" : "btn-mark"}`}
                 disabled={applied && disableAppliedAction}
                 onClick={() => onAction(job)}
@@ -168,8 +175,9 @@ export default function JobList({
       })}
 
       {pageCount > 1 && (
-        <nav className="pagination" aria-label="Job pages">
+        <nav className="pagination" aria-label="Job pagination">
           <button
+            type="button"
             className="pagination-nav-btn"
             disabled={page === 1}
             onClick={() => onPageChange(page - 1)}
@@ -179,6 +187,7 @@ export default function JobList({
           {firstVisiblePage > 1 && <span className="pagination-ellipsis" aria-hidden="true">…</span>}
           {visiblePages.map((visiblePage) => (
             <button
+              type="button"
               key={visiblePage}
               aria-current={visiblePage === page ? "page" : undefined}
               className={`pagination-num-btn ${visiblePage === page ? "selected" : ""}`}
@@ -190,8 +199,11 @@ export default function JobList({
           {firstVisiblePage + visiblePages.length - 1 < pageCount && (
             <span className="pagination-ellipsis" aria-hidden="true">…</span>
           )}
-          <span className="pagination-summary">Page {page} of {pageCount}</span>
+          <span className="pagination-summary">
+            Page {page} of {pageCount}
+          </span>
           <button
+            type="button"
             className="pagination-nav-btn"
             disabled={page === pageCount}
             onClick={() => onPageChange(page + 1)}

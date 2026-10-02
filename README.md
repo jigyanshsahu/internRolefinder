@@ -1,47 +1,24 @@
 # InternRoleFinder
 
-An automated directory of verified software internship and fresher application links, categorized into **SDE** and **AI** roles. Non-software and senior roles are rejected. Listings link directly to employer applications and prioritize Indian and remote opportunities.
+An automated directory of verified software internship application links, categorized into **SDE Intern**, **Frontend Intern**, **Backend Intern**, and **Fullstack Intern** roles. Non-software and senior roles are rejected. Listings link directly to employer applications and prioritize verified startup boards.
 
 ---
 
 ## Features
 
-- **Remote-Only Default Filter**:
-  - Remote jobs are filtered by default across the API and frontend (`remote_only=true`).
-  - On-site / hybrid roles remain accessible via a one-click toggle or query parameter.
-- **Public ATS & Platform Discovery**: Direct ingestion from verified official employer portals:
-  - **Greenhouse** (`boards-api.greenhouse.io`, `job-boards.greenhouse.io`)
-  - **Lever** (`api.lever.co`, `jobs.lever.co`)
-  - **Ashby** (`api.ashbyhq.com`, `jobs.ashbyhq.com`)
-  - **Keka** (`*.keka.com/careers`)
-  - **Freshteam** (`*.freshteam.com/jobs`)
-  - **Zoho Recruit** (`*.zohorecruit.com`, `*.zohorecruit.in`)
-  - **SmartRecruiters** (`api.smartrecruiters.com`)
-  - **Workable** (`www.workable.com/api/accounts`, `apply.workable.com`)
-  - **Recruitee** (`{company}.recruitee.com/api/offers`)
-  - **Workday** (public `myworkdayjobs.com` career boards)
-  - **Official career pages** that publish Schema.org `JobPosting` JSON-LD
-  - **Strict Aggregator & Stale Rejection**: Automatically rejects non-direct aggregators (LinkedIn, Indeed, Internshala, Wellfound, Naukri, Cutshort, etc.) and auto-prunes stale or expired postings.
-- **Verified Coverage for 120 Indian & Global Tech Companies**:
-  - Full verified website and official career portal coverage for all 120 company seeds.
-- **Alerts for Newly Verified Matching Roles**:
-  - Dedicated `/api/jobs/alerts` endpoint returning roles discovered and verified within the last 24 hours.
-  - In-app notification bell with unread badge count, instant alert preview modal, and optional browser Web Notification API integration.
-- **Skills, Location & Date Fit Filters with Fit Ranking**:
-  - Multi-skill filtering (Python, React, TypeScript, Go, PyTorch, LLMs, Docker, etc.) plus custom skill tag inputs.
-  - Location eligibility selector (Any Remote, India Remote & Hubs, International).
-  - Internship date & term selector (Summer 2026, Immediate / Spring, Fall 2026, Winter 2027).
-  - Dynamic fit scoring algorithm computing keyword relevance, location match, and term timing, ranking roles by fit percentage (`⚡ 96% Fit`).
-- **Enhanced Application Tracker & Interview Stages (`/applied`)**:
-  - Comprehensive interview pipeline tracking across 8 distinct stages: `Applied`, `Online Assessment (OA)`, `Recruiter Screen`, `Technical Round`, `Final Round`, `Offer Received 🎉`, `Not Selected`, and `Withdrawn`.
-  - Follow-up reminders with overdue alert banner, custom date-picker, and quick reminder presets (`+3d`, `+7d`, `+14d`).
-  - One-click copy for professional follow-up email drafts customized to company, role, and submission date.
-  - Stage feedback & interview prep notes saved persistently in local storage.
-- **Intelligent Role Classification**:
-  - **SDE**: Software Engineering, Full-Stack, Frontend, Backend, Web Development, DevOps, Platform Engineering, Site Reliability, Data Engineering, and Mobile Engineering.
-  - **AI**: Generative AI, LLMs, Machine Learning, Deep Learning, Computer Vision, NLP, Data Science, Robotics, and Forward Deployed Engineering.
-  - Only explicit software/AI internship or fresher postings are eligible; hardware, HR, process-planning, and other non-software postings are excluded.
-  - Automatic exclusion of senior, staff, lead, principal, and manager roles.
+- **Focused Software Intern Categories**:
+  - **SDE Intern**: General software engineering and development internships.
+  - **Frontend Intern**: UI, frontend, and web engineering internships.
+  - **Backend Intern**: Backend, infrastructure, API, and systems internships.
+  - **Fullstack Intern**: Full-stack engineering internships.
+- **Direct Employer ATS Links**:
+  - Ingestion directly from official employer portals (Greenhouse, Lever, Ashby, Keka, Freshteam, Zoho Recruit, SmartRecruiters, Workable, Recruitee, Workday, and Schema.org JobPosting).
+  - No aggregators (LinkedIn, Indeed, Internshala, etc. are rejected).
+- **Workplace Filters**:
+  - Default view displays all verified locations (on-site, hybrid, remote).
+  - One-click toggle to filter for remote positions.
+- **Application Tracker (`/applied`)**:
+  - Keep track of applied roles and interview stages directly in the app.
 
 ---
 

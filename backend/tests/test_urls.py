@@ -121,7 +121,7 @@ def test_normalizes_nested_schema_job_postings():
     assert len(jobs) == 1
     assert jobs[0].is_remote is True
     assert jobs[0].location == "Remote"
-    assert jobs[0].role_type == RoleType.ai
+    assert jobs[0].role_type == RoleType.sde
 
 
 def test_schema_location_label_remote_sets_remote_flag():
@@ -355,7 +355,7 @@ def test_normalizes_keka_internship():
     assert jobs[0].title == "Software Engineer Intern, AI"
     assert jobs[0].apply_url == "https://zluri.keka.com/careers/jobdetails/2002"
     assert jobs[0].is_remote is True
-    assert jobs[0].role_type == RoleType.ai
+    assert jobs[0].role_type == RoleType.sde
 
 
 def test_normalizes_zohorecruit_internship():
@@ -376,5 +376,5 @@ def test_normalizes_zohorecruit_internship():
     assert jobs[0].title == "Full Stack Engineer Intern"
     assert jobs[0].apply_url == "https://agnikul.zohorecruit.in/jobs/Careers/3003"
     assert jobs[0].country == "India"
-    assert jobs[0].role_type == RoleType.sde
+    assert jobs[0].role_type == RoleType.full_stack
 

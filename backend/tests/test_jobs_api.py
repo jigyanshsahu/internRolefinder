@@ -13,7 +13,7 @@ def test_jobs_api_paginates_and_returns_dynamic_total_pages():
     db.scalar.return_value = 241
     db.scalars.return_value.all.return_value = []
 
-    response = jobs(role_type=RoleType.ai, page=2, page_size=100, db=db)
+    response = jobs(role_type=RoleType.frontend, page=2, page_size=100, db=db)
 
     assert response.page == 2
     assert response.page_size == 100
@@ -61,21 +61,21 @@ def test_jobs_api_prioritizes_discovered_startup_boards():
     assert ordering.index("jobs.is_remote") < ordering.index("jobs.source_url")
 
 
-def test_jobs_api_defaults_to_remote_only_filter():
+def test_jobs_api_can_filter_by_remote_only():
     db = Mock()
     db.scalar.return_value = 50
     db.scalars.return_value.all.return_value = []
 
-    jobs(role_type="sde", page=1, page_size=20, db=db)
+    jobs(role_type="sde", remote_only=True, page=1, page_size=20, db=db)
 
     query = db.scalars.call_args.args[0]
     compiled = query.compile(dialect=postgresql.dialect())
     statement = str(compiled)
     where_clause = statement.split("WHERE", 1)[1].split("ORDER BY", 1)[0]
-    assert "jobs.is_remote = true" in where_clause.lower()
+    assert "jobs.is_remote is true" in where_clause.lower() or "jobs.is_remote = true" in where_clause.lower()
 
 
-def test_jobs_api_can_disable_remote_only():
+def test_jobs_api_defaults_to_all_workplaces():
     db = Mock()
     db.scalar.return_value = 50
     db.scalars.return_value.all.return_value = []
@@ -107,4 +107,4 @@ def test_company_seed_status_api_returns_source_and_freshness_fields():
 
     assert response[0].company_name == "Drivetrain"
     assert response[0].status == "board_found"
-    assert str(response[0].careers_url) == "https://jobs.lever.co/drivetrain"
+    assert str(response[0].careers_url) == "https://jobs.lever.co/drivetrain"

@@ -1,6 +1,6 @@
 from datetime import datetime
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, HttpUrl
 from app.types import RoleType
 
 
@@ -12,21 +12,24 @@ class JobOut(BaseModel):
     location: str | None
     country: str | None
     is_remote: bool
+    is_startup: bool = False
+    ats_type: str | None = None
     role_type: RoleType
     description: str | None = None
     posted_at: datetime | None = None
     apply_url: HttpUrl
     first_seen_at: datetime
     last_checked_at: datetime
-    fit_score: int | None = None
-    matched_skills: list[str] = Field(default_factory=list)
 
 
 class SummaryOut(BaseModel):
+    all: int = 0
     sde: int = 0
-    ai: int = 0
+    frontend: int = 0
+    backend: int = 0
+    full_stack: int = 0
     total_remote: int = 0
-    total_active: int = 0
+    total_startups: int = 0
 
 
 class JobPageOut(BaseModel):
@@ -35,12 +38,6 @@ class JobPageOut(BaseModel):
     page_size: int
     total: int
     total_pages: int
-
-
-class JobAlertsOut(BaseModel):
-    items: list[JobOut]
-    total_new: int
-    last_checked_at: datetime
 
 
 class CompanySeedOut(BaseModel):

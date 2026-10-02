@@ -5,51 +5,42 @@ import Link from "next/link";
 import JobList, { jobsPerPage, type Job, type JobCategory } from "./components/JobList";
 import { addAppliedJob, readAppliedJobs, subscribeToAppliedJobChanges } from "./applied-storage";
 
-type Role = JobCategory;
-type JobsResponse = { items: Job[]; page: number; page_size: number; total: number; total_pages: number };
-type SummaryResponse = { sde: number; ai: number; total_remote: number; total_active: number };
-type AlertsResponse = { items: Job[]; total_new: number; last_checked_at: string };
+type RoleFilter = "all" | JobCategory;
 
-const POPULAR_SKILLS = [
-  "Python",
-  "React",
-  "TypeScript",
-  "Next.js",
-  "Node.js",
-  "Go",
-  "Java",
-  "PyTorch",
-  "LLMs",
-  "Docker",
-  "SQL",
-  "C++",
-];
+type JobsResponse = {
+  items: Job[];
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+};
 
-const LOCATION_OPTIONS = [
-  { key: "any_remote", label: "Any Remote" },
-  { key: "india", label: "India Remote & Hubs" },
-  { key: "international", label: "International" },
-  { key: "all", label: "All Locations (Inc. On-site)" },
-];
+type SummaryResponse = {
+  all: number;
+  sde: number;
+  frontend: number;
+  backend: number;
+  full_stack: number;
+  total_remote: number;
+  total_startups: number;
+};
 
-const DATES_OPTIONS = [
-  { key: "all", label: "All Terms" },
-  { key: "summer_2026", label: "Summer 2026" },
-  { key: "immediate", label: "Immediate / Spring" },
-  { key: "fall_2026", label: "Fall 2026" },
-  { key: "winter_2027", label: "Winter 2027" },
+const CATEGORIES: { key: RoleFilter; label: string }[] = [
+  { key: "all", label: "All Roles" },
+  { key: "sde", label: "SDE Intern" },
+  { key: "frontend", label: "Frontend Intern" },
+  { key: "backend", label: "Backend Intern" },
+  { key: "full_stack", label: "Fullstack Intern" },
 ];
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export default function Home() {
-  const [role, setRole] = useState<Role>("sde");
-  const [remoteOnly, setRemoteOnly] = useState<boolean>(true);
-  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
-  const [skillInput, setSkillInput] = useState<string>("");
-  const [locationEligibility, setLocationEligibility] = useState<string>("any_remote");
-  const [internshipDates, setInternshipDates] = useState<string>("all");
-  const [sortBy, setSortBy] = useState<"priority" | "fit" | "freshness">("priority");
+  const [role, setRole] = useState<RoleFilter>("all");
+  const [remoteOnly, setRemoteOnly] = useState<boolean>(false);
+  const [startupsOnly, setStartupsOnly] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [debouncedSearch, setDebouncedSearch] = useState<string>("");
 
   const [page, setPage] = useState(1);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -58,59 +49,63 @@ export default function Home() {
   const [appliedJobsCount, setAppliedJobsCount] = useState(0);
   const [appliedIds, setAppliedIds] = useState<Set<string>>(new Set());
   const [applicationsLoaded, setApplicationsLoaded] = useState(false);
-
-  const [alerts, setAlerts] = useState<Job[]>([]);
-  const [showAlertModal, setShowAlertModal] = useState(false);
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [summary, setSummary] = useState<SummaryResponse | null>(null);
 
   const [queryReady, setQueryReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Endpoint construction with all active filters
+  // Debounce search query
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+      setPage(1);
+    }, 250);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
+
+  // Endpoint construction
   const endpoint = useMemo(() => {
     const params = new URLSearchParams({
       page: String(page),
       page_size: String(jobsPerPage),
-      role_type: role,
       remote_only: String(remoteOnly),
-      sort_by: selectedSkills.length > 0 && sortBy === "priority" ? "fit" : sortBy,
+      startups_only: String(startupsOnly),
     });
-    if (selectedSkills.length > 0) {
-      params.set("skills", selectedSkills.join(","));
+    if (role !== "all") {
+      params.set("role_type", role);
     }
-    if (locationEligibility && locationEligibility !== "all") {
-      params.set("location_eligibility", locationEligibility);
-    }
-    if (internshipDates && internshipDates !== "all") {
-      params.set("internship_dates", internshipDates);
+    if (debouncedSearch.trim()) {
+      params.set("search", debouncedSearch.trim());
     }
     return `${apiUrl}/api/jobs?${params.toString()}`;
-  }, [page, role, remoteOnly, selectedSkills, locationEligibility, internshipDates, sortBy]);
+  }, [page, role, remoteOnly, startupsOnly, debouncedSearch]);
 
   // Sync initial state from URL query
   useEffect(() => {
     const syncFromUrl = () => {
       const params = new URLSearchParams(window.location.search);
       const queryPage = Number(params.get("page"));
-      const queryRole = params.get("role_type");
+      const queryRole = params.get("role_type") as RoleFilter | null;
       const queryRemote = params.get("remote_only");
-      const querySkills = params.get("skills");
-      const queryLocation = params.get("location_eligibility");
-      const queryDates = params.get("internship_dates");
-      const querySort = params.get("sort_by") as "priority" | "fit" | "freshness";
+      const queryStartups = params.get("startups_only");
+      const querySearch = params.get("search");
 
       setPage(Number.isInteger(queryPage) && queryPage > 0 ? queryPage : 1);
-      setRole(queryRole === "ai" ? "ai" : "sde");
-      // Default to remoteOnly = true unless explicitly set to false
-      setRemoteOnly(queryRemote === "false" ? false : true);
-      if (querySkills) {
-        setSelectedSkills(querySkills.split(",").map((s) => s.trim()).filter(Boolean));
+      if (
+        queryRole &&
+        ["all", "sde", "frontend", "backend", "full_stack"].includes(queryRole)
+      ) {
+        setRole(queryRole);
+      } else {
+        setRole("all");
       }
-      if (queryLocation) setLocationEligibility(queryLocation);
-      if (queryDates) setInternshipDates(queryDates);
-      if (querySort) setSortBy(querySort);
+      setRemoteOnly(queryRemote === "true");
+      setStartupsOnly(queryStartups === "true");
+      if (querySearch) {
+        setSearchQuery(querySearch);
+        setDebouncedSearch(querySearch);
+      }
     };
 
     syncFromUrl();
@@ -119,14 +114,7 @@ export default function Home() {
     return () => window.removeEventListener("popstate", syncFromUrl);
   }, []);
 
-  // Check Web Notifications permission
-  useEffect(() => {
-    if (typeof window !== "undefined" && "Notification" in window) {
-      setNotificationsEnabled(Notification.permission === "granted");
-    }
-  }, []);
-
-  // Load applied jobs
+  // Load applied jobs for tracking
   useEffect(() => {
     const updateLocalApplied = () => {
       const stored = readAppliedJobs();
@@ -138,30 +126,15 @@ export default function Home() {
     return subscribeToAppliedJobChanges(updateLocalApplied);
   }, []);
 
-  // Fetch summary counts and newly verified alerts
+  // Fetch summary counts for tabs
   useEffect(() => {
-    fetch(`${apiUrl}/api/jobs/summary?remote_only=${remoteOnly}`)
+    fetch(`${apiUrl}/api/jobs/summary?remote_only=${remoteOnly}&startups_only=${startupsOnly}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data: SummaryResponse | null) => {
         if (data) setSummary(data);
       })
       .catch(() => {});
-
-    fetch(`${apiUrl}/api/jobs/alerts?role_type=${role}&remote_only=${remoteOnly}&hours=24`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: AlertsResponse | null) => {
-        if (data) {
-          setAlerts(data.items);
-          if (notificationsEnabled && data.items.length > 0 && "Notification" in window) {
-            new Notification(`InternRoleFinder: ${data.items.length} new verified roles!`, {
-              body: `${data.items[0].title} at ${data.items[0].company || "Verified Startup"} is now open.`,
-              icon: "/favicon.ico",
-            });
-          }
-        }
-      })
-      .catch(() => {});
-  }, [role, remoteOnly, notificationsEnabled]);
+  }, [remoteOnly, startupsOnly]);
 
   // Fetch jobs for current query
   useEffect(() => {
@@ -172,7 +145,11 @@ export default function Home() {
     setError("");
 
     fetch(endpoint, { signal: controller.signal })
-      .then((response) => (response.ok ? response.json() : Promise.reject(new Error("Could not load jobs."))))
+      .then((response) =>
+        response.ok
+          ? response.json()
+          : Promise.reject(new Error("Could not load jobs from server."))
+      )
       .then((data: JobsResponse) => {
         if (!active) return;
         setJobs(data.items);
@@ -197,57 +174,46 @@ export default function Home() {
 
   // Push state to URL
   const pushUrlState = (
-    overrides: Record<string, string | number | boolean | string[] | null | undefined>
+    overrides: Record<string, string | number | boolean | null | undefined>
   ) => {
     const params = new URLSearchParams(window.location.search);
     params.set("page", String(overrides.page ?? page));
-    params.set("role_type", String(overrides.role ?? role));
-    params.set("remote_only", String(overrides.remoteOnly ?? remoteOnly));
 
-    const nextSkills = Array.isArray(overrides.skills)
-      ? (overrides.skills as string[])
-      : selectedSkills;
-    if (nextSkills.length > 0) {
-      params.set("skills", nextSkills.join(","));
+    const nextRole = overrides.role !== undefined ? String(overrides.role) : role;
+    if (nextRole && nextRole !== "all") {
+      params.set("role_type", nextRole);
     } else {
-      params.delete("skills");
+      params.delete("role_type");
     }
 
-    const nextLoc = overrides.location !== undefined ? (overrides.location as string) : locationEligibility;
-    if (nextLoc && nextLoc !== "all") params.set("location_eligibility", nextLoc);
-    else params.delete("location_eligibility");
+    const nextRemote =
+      overrides.remoteOnly !== undefined ? Boolean(overrides.remoteOnly) : remoteOnly;
+    if (nextRemote) {
+      params.set("remote_only", "true");
+    } else {
+      params.delete("remote_only");
+    }
 
-    const nextDates = overrides.dates !== undefined ? (overrides.dates as string) : internshipDates;
-    if (nextDates && nextDates !== "all") params.set("internship_dates", nextDates);
-    else params.delete("internship_dates");
+    const nextStartups =
+      overrides.startupsOnly !== undefined ? Boolean(overrides.startupsOnly) : startupsOnly;
+    if (nextStartups) {
+      params.set("startups_only", "true");
+    } else {
+      params.delete("startups_only");
+    }
 
-    const nextSort = overrides.sortBy !== undefined ? (overrides.sortBy as string) : sortBy;
-    if (nextSort !== "priority") params.set("sort_by", nextSort);
-    else params.delete("sort_by");
+    const nextSearch =
+      overrides.search !== undefined ? String(overrides.search) : debouncedSearch;
+    if (nextSearch && nextSearch.trim()) {
+      params.set("search", nextSearch.trim());
+    } else {
+      params.delete("search");
+    }
 
     window.history.pushState({}, "", `${window.location.pathname}?${params.toString()}`);
   };
 
-  const toggleSkill = (skill: string) => {
-    const clean = skill.trim();
-    if (!clean) return;
-    const exists = selectedSkills.some((s) => s.toLowerCase() === clean.toLowerCase());
-    const next = exists
-      ? selectedSkills.filter((s) => s.toLowerCase() !== clean.toLowerCase())
-      : [...selectedSkills, clean];
-    setSelectedSkills(next);
-    setPage(1);
-    pushUrlState({ skills: next, page: 1 });
-  };
-
-  const handleAddCustomSkill = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!skillInput.trim()) return;
-    toggleSkill(skillInput);
-    setSkillInput("");
-  };
-
-  const handleRoleChange = (newRole: Role) => {
+  const handleRoleChange = (newRole: RoleFilter) => {
     setRole(newRole);
     setPage(1);
     pushUrlState({ role: newRole, page: 1 });
@@ -259,268 +225,191 @@ export default function Home() {
     pushUrlState({ remoteOnly: isRemote, page: 1 });
   };
 
-  const handleLocationChange = (loc: string) => {
-    setLocationEligibility(loc);
+  const handleStartupsToggle = (isStartups: boolean) => {
+    setStartupsOnly(isStartups);
     setPage(1);
-    pushUrlState({ location: loc, page: 1 });
+    pushUrlState({ startupsOnly: isStartups, page: 1 });
   };
 
-  const handleDatesChange = (dates: string) => {
-    setInternshipDates(dates);
+  const resetAllFilters = () => {
+    setRole("all");
+    setRemoteOnly(false);
+    setStartupsOnly(false);
+    setSearchQuery("");
+    setDebouncedSearch("");
     setPage(1);
-    pushUrlState({ dates: dates, page: 1 });
-  };
-
-  const handleSortChange = (newSort: "priority" | "fit" | "freshness") => {
-    setSortBy(newSort);
-    setPage(1);
-    pushUrlState({ sortBy: newSort, page: 1 });
-  };
-
-  const requestNotificationAccess = async () => {
-    if (typeof window !== "undefined" && "Notification" in window) {
-      const permission = await Notification.requestPermission();
-      setNotificationsEnabled(permission === "granted");
-      if (permission === "granted") {
-        new Notification("Alerts Activated!", {
-          body: "You will receive desktop alerts when new verified roles are discovered.",
-          icon: "/favicon.ico",
-        });
-      }
-    }
+    pushUrlState({
+      role: "all",
+      remoteOnly: false,
+      startupsOnly: false,
+      search: "",
+      page: 1,
+    });
   };
 
   const markApplied = (job: Job) => {
     addAppliedJob(job);
   };
 
+  const getCategoryCount = (key: RoleFilter): number | null => {
+    if (!summary) return null;
+    if (key === "all") return summary.all;
+    if (key === "sde") return summary.sde;
+    if (key === "frontend") return summary.frontend;
+    if (key === "backend") return summary.backend;
+    if (key === "full_stack") return summary.full_stack;
+    return null;
+  };
+
+  const hasActiveFilters =
+    role !== "all" || remoteOnly || startupsOnly || debouncedSearch.trim() !== "";
+
   return (
     <main>
       <header className="site-header">
         <div className="header-meta-row">
-          <p className="eyebrow">Verified Direct ATS Feeds</p>
-          {/* Alerts Bell trigger with badge */}
-          <button
-            type="button"
-            className={`alert-trigger-btn ${alerts.length > 0 ? "has-alerts" : ""}`}
-            onClick={() => setShowAlertModal(true)}
-            title="View newly verified matching roles"
-            aria-label="View alerts for newly verified roles"
-          >
-            <span className="bell-icon">🔔</span>
-            <span className="alert-btn-text">Alerts</span>
-            {alerts.length > 0 && <span className="alert-count-pill">{alerts.length} New</span>}
-          </button>
+          <p className="eyebrow">⚡ Direct ATS & Startup Feeds</p>
+          <div className="header-badges-row">
+            <span className="live-stat-pill">
+              🇮🇳 India Rank #1
+            </span>
+            <span className="live-stat-pill">
+              🚀 {summary?.total_startups ?? 0} High-Reply Startups
+            </span>
+          </div>
         </div>
 
         <div className="header-title-row">
           <div>
             <h1>InternRoleFinder</h1>
             <p className="subtle">
-              Zero-credential discovery of verified software and AI internships. Direct employer ATS links only.
+              Verified software internships for <strong>SDE, Frontend, Backend & Fullstack</strong>. Direct ATS application links only — prioritized for startups with the highest interview callback rates.
             </p>
-          </div>
-        </div>
-
-        {/* Global Statistics Bar */}
-        <div className="metrics-bar">
-          <div className="metric-chip">
-            <span className="metric-val">{total}</span>
-            <span className="metric-lbl">Matching Roles</span>
-          </div>
-          <div className="metric-chip">
-            <span className="metric-val">{summary?.total_remote ?? "—"}</span>
-            <span className="metric-lbl">Verified Remote</span>
-          </div>
-          <div className="metric-chip">
-            <span className="metric-val">{alerts.length}</span>
-            <span className="metric-lbl">Discovered in 24h</span>
           </div>
         </div>
       </header>
 
-      {/* Primary Top Navigation */}
+      {/* Primary Navigation */}
       <div className="page-links">
         <Link href="/" aria-current="page" className="nav-link active">
-          Browse Jobs ({total})
+          Browse Opportunities ({total})
         </Link>
         <Link href="/applied" className="nav-link">
-          Application Tracker ({appliedJobsCount})
+          Applied Tracker ({appliedJobsCount})
         </Link>
       </div>
 
-      {/* Filter Section Card */}
+      {/* Startup Advantage Callout */}
+      <div className="startup-tip-banner">
+        <div className="startup-tip-content">
+          <span className="startup-tip-icon" aria-hidden="true">💡</span>
+          <div>
+            <strong>Why apply to high-growth startups?</strong> Fast-moving tech startups have a <strong>10x–50x higher interview response rate</strong> than legacy MNC black holes because engineering leads directly review your GitHub, projects, and resume.
+          </div>
+        </div>
+      </div>
+
+      {/* Live Search Bar */}
+      <div className="search-section">
+        <div className="search-input-wrapper">
+          <span className="search-icon" aria-hidden="true">🔍</span>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search by company (e.g. Zepto, Razorpay, Supabase), tech (React, Go, Python), or location..."
+            className="search-input"
+            aria-label="Search software internships"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              className="search-clear-btn"
+              onClick={() => setSearchQuery("")}
+              aria-label="Clear search input"
+              title="Clear search"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Filter Card: Category, Startups Toggle & Remote Toggle */}
       <div className="filter-card">
-        {/* Row 1: Role Type + Remote Only Switch */}
         <div className="filter-row primary-controls">
           <div className="control-group">
-            <span className="filter-label">Role Focus:</span>
-            <div className="btn-toggle-group" role="group" aria-label="Role category">
-              <button
-                type="button"
-                className={`filter-btn ${role === "sde" ? "selected" : ""}`}
-                onClick={() => handleRoleChange("sde")}
-              >
-                SDE Internships
-              </button>
-              <button
-                type="button"
-                className={`filter-btn ${role === "ai" ? "selected" : ""}`}
-                onClick={() => handleRoleChange("ai")}
-              >
-                AI & GenAI Internships
-              </button>
+            <span className="filter-label">Role Category:</span>
+            <div className="btn-toggle-group role-selector-group" role="group" aria-label="Role category">
+              {CATEGORIES.map((cat) => {
+                const count = getCategoryCount(cat.key);
+                return (
+                  <button
+                    type="button"
+                    key={cat.key}
+                    className={`filter-btn ${role === cat.key ? "selected" : ""}`}
+                    onClick={() => handleRoleChange(cat.key)}
+                  >
+                    <span>{cat.label}</span>
+                    {count !== null && <span className="cat-count-pill">{count}</span>}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {/* Remote Only Toggle - Default Active */}
-          <div className="control-group remote-toggle-group">
-            <span className="filter-label">Workplace:</span>
-            <div className="btn-toggle-group" role="group" aria-label="Remote filter">
+          <div className="control-group secondary-toggles">
+            <span className="filter-label">Opportunity Filter:</span>
+            <div className="btn-toggle-group" role="group" aria-label="Startups and workplace filter">
+              <button
+                type="button"
+                className={`filter-btn startup-filter-btn ${startupsOnly ? "selected is-startup-active" : ""}`}
+                onClick={() => handleStartupsToggle(!startupsOnly)}
+                title="Only show fast-growing tech startups with high response rates"
+              >
+                <span>🚀 Startups Only</span>
+                {summary && (
+                  <span className="cat-count-pill startup-count-pill">
+                    {summary.total_startups}
+                  </span>
+                )}
+              </button>
+
               <button
                 type="button"
                 className={`filter-btn remote-btn ${remoteOnly ? "selected is-remote" : ""}`}
-                onClick={() => handleRemoteToggle(true)}
+                onClick={() => handleRemoteToggle(!remoteOnly)}
                 title="Only show verified remote positions"
               >
                 <span className="pulse-indicator" aria-hidden="true" />
-                Remote Only (Default)
-              </button>
-              <button
-                type="button"
-                className={`filter-btn ${!remoteOnly ? "selected" : ""}`}
-                onClick={() => handleRemoteToggle(false)}
-                title="Include on-site and hybrid roles"
-              >
-                All (Inc. On-site)
+                <span>Remote Only</span>
               </button>
             </div>
           </div>
         </div>
 
-        {/* Row 2: Location Eligibility & Internship Dates */}
-        <div className="filter-row secondary-controls">
-          <div className="control-group">
-            <label htmlFor="location-select" className="filter-label">
-              Location Eligibility:
-            </label>
-            <select
-              id="location-select"
-              className="styled-select"
-              value={locationEligibility}
-              onChange={(e) => handleLocationChange(e.target.value)}
-            >
-              {LOCATION_OPTIONS.map((opt) => (
-                <option key={opt.key} value={opt.key}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="control-group">
-            <label htmlFor="dates-select" className="filter-label">
-              Internship Term / Dates:
-            </label>
-            <select
-              id="dates-select"
-              className="styled-select"
-              value={internshipDates}
-              onChange={(e) => handleDatesChange(e.target.value)}
-            >
-              {DATES_OPTIONS.map((opt) => (
-                <option key={opt.key} value={opt.key}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="control-group">
-            <label htmlFor="sort-select" className="filter-label">
-              Rank & Sort:
-            </label>
-            <select
-              id="sort-select"
-              className="styled-select"
-              value={selectedSkills.length > 0 && sortBy === "priority" ? "fit" : sortBy}
-              onChange={(e) => handleSortChange(e.target.value as "priority" | "fit" | "freshness")}
-            >
-              <option value="fit">⚡ Best Fit (Ranked)</option>
-              <option value="priority">Priority (Discovered Startups First)</option>
-              <option value="freshness">Newly Verified (Most Recent)</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Row 3: Skills Filter and Fit Matcher */}
-        <div className="filter-row skills-controls">
-          <div className="skills-header">
-            <span className="filter-label">Filter & Rank by Your Skills:</span>
-            {selectedSkills.length > 0 && (
-              <button
-                type="button"
-                className="clear-skills-btn"
-                onClick={() => {
-                  setSelectedSkills([]);
-                  setPage(1);
-                  pushUrlState({ skills: [], page: 1 });
-                }}
-              >
-                Clear skills ({selectedSkills.length})
-              </button>
+        {hasActiveFilters && (
+          <div className="active-filter-bar">
+            <span className="active-filters-label">Active Filters:</span>
+            {role !== "all" && (
+              <span className="filter-tag">
+                {CATEGORIES.find((c) => c.key === role)?.label}
+              </span>
             )}
-          </div>
-
-          <div className="skills-pill-rack">
-            {POPULAR_SKILLS.map((skill) => {
-              const active = selectedSkills.some((s) => s.toLowerCase() === skill.toLowerCase());
-              return (
-                <button
-                  type="button"
-                  key={skill}
-                  className={`skill-tag-btn ${active ? "active" : ""}`}
-                  onClick={() => toggleSkill(skill)}
-                >
-                  {active ? `✓ ${skill}` : `+ ${skill}`}
-                </button>
-              );
-            })}
-          </div>
-
-          <form onSubmit={handleAddCustomSkill} className="custom-skill-form">
-            <input
-              type="text"
-              placeholder="Add other skill (e.g. FastAPI, Tailwind, Swift)…"
-              value={skillInput}
-              onChange={(e) => setSkillInput(e.target.value)}
-              className="skill-input"
-            />
-            <button type="submit" className="add-skill-btn" disabled={!skillInput.trim()}>
-              Add
+            {startupsOnly && <span className="filter-tag tag-startup">🚀 Startups Only</span>}
+            {remoteOnly && <span className="filter-tag tag-remote">🌐 Remote Only</span>}
+            {debouncedSearch && (
+              <span className="filter-tag tag-search">"{debouncedSearch}"</span>
+            )}
+            <button
+              type="button"
+              className="btn-clear-all"
+              onClick={resetAllFilters}
+            >
+              Reset All Filters ✕
             </button>
-          </form>
-
-          {selectedSkills.length > 0 && (
-            <div className="active-skills-summary">
-              <span className="summary-title">Active Match Criteria:</span>
-              {selectedSkills.map((s) => (
-                <span key={s} className="active-skill-badge">
-                  {s}
-                  <button
-                    type="button"
-                    onClick={() => toggleSkill(s)}
-                    aria-label={`Remove ${s}`}
-                    className="remove-skill-btn"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-              <span className="ranking-badge-note">⚡ Roles are ranked by fit score</span>
-            </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* Main Results Section */}
@@ -542,22 +431,16 @@ export default function Home() {
           <div className="status-banner empty">
             <p className="empty-title">No matching roles found.</p>
             <p className="empty-desc">
-              Try adjusting your skill filters, switching from Remote Only to All Locations, or checking back soon as
-              new verified sources are crawled.
+              {debouncedSearch
+                ? `No active openings matched "${debouncedSearch}". Try a broader term like "React", "Python", or reset filters.`
+                : "Try switching filters to 'All Roles' or resetting filters to see available listings."}
             </p>
             <button
               type="button"
               className="btn-reset"
-              onClick={() => {
-                setRemoteOnly(true);
-                setSelectedSkills([]);
-                setLocationEligibility("all");
-                setInternshipDates("all");
-                setPage(1);
-                pushUrlState({ skills: [], location: "all", dates: "all", page: 1 });
-              }}
+              onClick={resetAllFilters}
             >
-              Reset Filters
+              Reset All Filters
             </button>
           </div>
         )}
@@ -565,14 +448,14 @@ export default function Home() {
         {!loading && !error && total > 0 && (
           <div className="result-meta-row">
             <span className="result-count">
-              <strong>{total}</strong> verified roles
-              {remoteOnly && " (Remote Only default active)"}
+              Showing <strong>{jobs.length}</strong> of <strong>{total}</strong> verified roles
+              {startupsOnly ? " (Startups Only)" : ""}
+              {remoteOnly ? " (Remote Only)" : ""}
+              {debouncedSearch ? ` for "${debouncedSearch}"` : ""}
             </span>
-            {selectedSkills.length > 0 && (
-              <span className="ranking-indicator">
-                Sorted by <strong>Fit Score</strong> for ({selectedSkills.join(", ")})
-              </span>
-            )}
+            <span className="ats-direct-hint">
+              ⚡ 100% Direct Employer ATS Links
+            </span>
           </div>
         )}
 
@@ -589,72 +472,9 @@ export default function Home() {
             actionLabel="Save & Track"
             disableAppliedAction
             onAction={markApplied}
-            activeSkills={selectedSkills}
           />
         )}
       </section>
-
-      {/* Newly Verified Roles Alerts Modal */}
-      {showAlertModal && (
-        <div className="modal-backdrop" onClick={() => setShowAlertModal(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <h2>Newly Verified Role Alerts</h2>
-                <p className="subtle">Roles crawled and verified active within the last 24 hours.</p>
-              </div>
-              <button
-                type="button"
-                className="close-modal-btn"
-                onClick={() => setShowAlertModal(false)}
-                aria-label="Close alerts"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="modal-actions-bar">
-              <span className="alert-badge-count">{alerts.length} fresh roles available</span>
-              {!notificationsEnabled ? (
-                <button type="button" className="btn-notif-enable" onClick={requestNotificationAccess}>
-                  🔔 Enable Browser Notifications
-                </button>
-              ) : (
-                <span className="notif-active-badge">✓ Desktop Notifications Active</span>
-              )}
-            </div>
-
-            <div className="alerts-list">
-              {alerts.length === 0 ? (
-                <p className="status">No new roles in the past 24 hours. Check back after the next crawl cycle!</p>
-              ) : (
-                alerts.map((alertJob) => (
-                  <div key={alertJob.id} className="alert-job-item">
-                    <div>
-                      <div className="alert-job-title">{alertJob.title}</div>
-                      <div className="alert-job-sub">
-                        <span>{alertJob.company || "Verified Startup"}</span>
-                        <span>•</span>
-                        <span>{alertJob.is_remote ? "Remote" : alertJob.location || "India"}</span>
-                      </div>
-                    </div>
-                    <div className="alert-item-actions">
-                      <a
-                        href={alertJob.apply_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="btn-apply-alert"
-                      >
-                        Apply Soon ↗
-                      </a>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </main>
   );
 }

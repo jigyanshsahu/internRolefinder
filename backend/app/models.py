@@ -18,6 +18,7 @@ class Job(Base):
     location: Mapped[str | None] = mapped_column(String(300), nullable=True)
     country: Mapped[str | None] = mapped_column(String(150), nullable=True)
     is_remote: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    is_startup: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", index=True)
     role_type: Mapped[RoleType] = mapped_column(Enum(RoleType, name="role_type"), index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)

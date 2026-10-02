@@ -3,5 +3,6 @@ import enum
 
 class RoleType(str, enum.Enum):
     sde = "sde"
-    ai = "ai"
-    other = "other"
+    frontend = "frontend"
+    backend = "backend"
+    full_stack = "full_stack"

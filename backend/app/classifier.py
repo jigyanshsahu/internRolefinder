@@ -8,22 +8,34 @@ NON_SOFTWARE_PATTERN = re.compile(
     re.I,
 )
 SOFTWARE_TITLE_PATTERN = re.compile(
-    r"\b(sde|swe|software (engineer|developer|development)|frontend (engineering|engineer|developer)|front[ -]?end (engineering|engineer|developer)|backend (engineering|engineer|developer)|back[ -]?end (engineering|engineer|developer)|full[ -]?stack (engineering|engineer|developer)|web engineer|web developer|application developer|mobile (engineer|developer)|game developer)\b",
+    r"\b(sde|swe|software (engineer|developer|development)|frontend (engineering|engineer|developer)|front[ -]?end (engineering|engineer|developer)|backend (engineering|engineer|developer)|back[ -]?end (engineering|engineer|developer)|full[ -]?stack (engineering|engineer|developer)|web engineer|web developer|web development|application developer|mobile (engineer|developer)|game developer|embedded software|systems? (engineer|developer))\b",
     re.I,
 )
-AI_DOMAIN_PATTERN = re.compile(
-    r"\b(ai|artificial intelligence|machine[ -]?learning|ml|deep learning|llm|large language models?|nlp|natural language processing|computer vision|generative ai|genai|robotics)\b",
+
+FULLSTACK_PATTERN = re.compile(r"\b(full[ -]?stack)\b", re.I)
+FRONTEND_PATTERN = re.compile(
+    r"\b(front[ -]?end|frontend|ui|web developer|web engineer|web development|web intern|client[ -]?side)\b",
     re.I,
 )
+BACKEND_PATTERN = re.compile(
+    r"\b(back[ -]?end|backend|infrastructure|distributed systems?|server|api|platform engineering)\b",
+    re.I,
+)
+
+
 def classify_role(title: str, text: str = "") -> RoleType | None:
     title_value = title.lower()
     if not INTERN_PATTERN.search(title_value):
         return None
     if EXCLUDED_PATTERN.search(title_value) or NON_SOFTWARE_PATTERN.search(title_value):
         return None
-    has_software_title = SOFTWARE_TITLE_PATTERN.search(title_value) is not None
-    if not has_software_title:
+    if not SOFTWARE_TITLE_PATTERN.search(title_value):
         return None
-    if AI_DOMAIN_PATTERN.search(title_value):
-        return RoleType.ai
+
+    if FULLSTACK_PATTERN.search(title_value):
+        return RoleType.full_stack
+    if FRONTEND_PATTERN.search(title_value):
+        return RoleType.frontend
+    if BACKEND_PATTERN.search(title_value):
+        return RoleType.backend
     return RoleType.sde

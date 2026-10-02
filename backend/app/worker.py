@@ -5,7 +5,14 @@ from celery import Celery
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from app.config import get_settings
-from app.crawler import canonical_url, discover_company_boards, discover_indian_startup_boards, discover_jobs_from_public_ats, is_active
+from app.crawler import (
+    canonical_url,
+    discover_company_boards,
+    discover_indian_startup_boards,
+    discover_jobs_from_public_ats,
+    discover_jobs_from_verified_listings,
+    is_active,
+)
 from app.database import SessionLocal
 from app.models import CompanySeed, Job, StartupBoard
 
@@ -39,6 +46,9 @@ def _upsert_discovered_jobs(db, discovered_jobs) -> int:
             "location": job.location,
             "country": job.country,
             "is_remote": job.is_remote,
+            "is_startup": getattr(job, "is_startup", False),
+            "description": getattr(job, "description", None),
+            "posted_at": getattr(job, "posted_at", None),
             "role_type": job.role_type,
             "apply_url": apply_url,
             "source_url": job.source_url,
@@ -57,6 +67,9 @@ def _upsert_discovered_jobs(db, discovered_jobs) -> int:
             "location": func.coalesce(excluded.location, Job.location),
             "country": func.coalesce(excluded.country, Job.country),
             "is_remote": excluded.is_remote,
+            "is_startup": func.coalesce(excluded.is_startup, Job.is_startup),
+            "description": func.coalesce(excluded.description, Job.description),
+            "posted_at": func.coalesce(excluded.posted_at, Job.posted_at),
         },
     )
     db.execute(statement)
@@ -71,10 +84,9 @@ def discover_jobs() -> int:
             {"name": board.company_name, "platform": board.platform, "slug": board.slug, "careers_url": board.careers_url}
             for board in db.scalars(select(StartupBoard)).all()
         ]
-        discovered = _upsert_discovered_jobs(
-            db,
-            asyncio.run(discover_jobs_from_public_ats(startup_boards)),
-        )
+        public_jobs = asyncio.run(discover_jobs_from_public_ats(startup_boards))
+        verified_jobs = asyncio.run(discover_jobs_from_verified_listings(limit=500))
+        discovered = _upsert_discovered_jobs(db, public_jobs + verified_jobs)
         db.commit()
     finally:
         db.close()
