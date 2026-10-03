@@ -1,4 +1,4 @@
-import type { Job } from "./components/JobList";
+import type { Job, JobCategory } from "./components/JobList";
 
 export type InterviewStage =
   | "applied"
@@ -22,8 +22,6 @@ export type AppliedJob = Job & {
   salary_or_stipend?: string;
 };
 
-const storageKey = "intern-role-finder-applied-jobs";
-const changeEvent = "intern-role-finder-applied-jobs-change";
 
 export const STAGE_CONFIG: Record<
   InterviewStage,
@@ -95,6 +93,102 @@ export const STAGE_CONFIG: Record<
   },
 };
 
+export const APPLIED_EXPIRATION_MS = 2 * 24 * 60 * 60 * 1000; // 2 days = 48 hours
+
+const storageKey = "intern-role-finder-applied-jobs";
+const appliedHistoryKey = "intern-role-finder-applied-history-ids";
+const changeEvent = "intern-role-finder-applied-jobs-change";
+
+export function isAppliedJobExpired(appliedAtStr?: string): boolean {
+  if (!appliedAtStr) return false;
+  try {
+    const appliedTime = new Date(appliedAtStr).getTime();
+    if (isNaN(appliedTime)) return false;
+    return Date.now() - appliedTime >= APPLIED_EXPIRATION_MS;
+  } catch {
+    return false;
+  }
+}
+
+export function getRemainingAppliedTime(appliedAtStr?: string): {
+  remainingMs: number;
+  hours: number;
+  minutes: number;
+  formattedText: string;
+  isExpired: boolean;
+} {
+  if (!appliedAtStr) {
+    return { remainingMs: 0, hours: 0, minutes: 0, formattedText: "0h", isExpired: true };
+  }
+  try {
+    const appliedTime = new Date(appliedAtStr).getTime();
+    if (isNaN(appliedTime)) {
+      return { remainingMs: 0, hours: 0, minutes: 0, formattedText: "0h", isExpired: true };
+    }
+    const remainingMs = APPLIED_EXPIRATION_MS - (Date.now() - appliedTime);
+    if (remainingMs <= 0) {
+      return { remainingMs: 0, hours: 0, minutes: 0, formattedText: "Expired", isExpired: true };
+    }
+    const totalMinutes = Math.floor(remainingMs / (1000 * 60));
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    const formattedText =
+      hours > 0 ? `${hours}h ${minutes}m left` : `${Math.max(1, minutes)}m left`;
+    return { remainingMs, hours, minutes, formattedText, isExpired: false };
+  } catch {
+    return { remainingMs: 0, hours: 0, minutes: 0, formattedText: "0h", isExpired: true };
+  }
+}
+
+export function getRemainingAppliedHours(appliedAtStr?: string): number {
+  if (!appliedAtStr) return 0;
+  try {
+    const appliedTime = new Date(appliedAtStr).getTime();
+    if (isNaN(appliedTime)) return 0;
+    const diff = APPLIED_EXPIRATION_MS - (Date.now() - appliedTime);
+    return Math.max(0, Math.ceil(diff / (1000 * 60 * 60)));
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Returns set of all job IDs that have been applied to (both currently tracked and historic).
+ * Jobs in this set will be permanently removed from the active browsing list.
+ */
+export function readAppliedHistoryIds(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(appliedHistoryKey);
+    const list: unknown = JSON.parse(raw ?? "[]");
+    const set = new Set<string>(
+      Array.isArray(list) ? list.filter((x): x is string => typeof x === "string") : []
+    );
+
+    // Also include any currently tracked applied jobs
+    const current = readAppliedJobs();
+    for (const job of current) {
+      set.add(job.id);
+    }
+    return set;
+  } catch {
+    return new Set();
+  }
+}
+
+export function markJobAsAppliedHistory(id: string) {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(appliedHistoryKey);
+    const list: unknown = JSON.parse(raw ?? "[]");
+    const set = new Set<string>(
+      Array.isArray(list) ? list.filter((x): x is string => typeof x === "string") : []
+    );
+    set.add(id);
+    window.localStorage.setItem(appliedHistoryKey, JSON.stringify(Array.from(set)));
+  } catch {}
+}
+
 export function readAppliedJobs(): AppliedJob[] {
   if (typeof window === "undefined") return [];
   try {
@@ -102,13 +196,37 @@ export function readAppliedJobs(): AppliedJob[] {
     const storedJobs: unknown = JSON.parse(raw ?? "[]");
     if (!Array.isArray(storedJobs)) return [];
 
-    const validJobs = storedJobs.filter(
-      (job) =>
-        typeof job?.id === "string" &&
-        typeof job?.title === "string" &&
-        (typeof job?.company === "string" || job?.company === null) &&
-        typeof job?.apply_url === "string"
-    );
+    const now = Date.now();
+    let hasExpired = false;
+
+    // Filter valid jobs AND purge jobs older than 2 days (48 hours)
+    const validJobs = storedJobs.filter((job) => {
+      if (
+        typeof job?.id !== "string" ||
+        typeof job?.title !== "string" ||
+        (typeof job?.company !== "string" && job?.company !== null) ||
+        typeof job?.apply_url !== "string"
+      ) {
+        return false;
+      }
+      const appliedTime = new Date(job.applied_at || now).getTime();
+      if (!isNaN(appliedTime) && now - appliedTime >= APPLIED_EXPIRATION_MS) {
+        hasExpired = true;
+        return false; // Automatically delete from applied list after 2 days
+      }
+      return true;
+    });
+
+    // If any jobs expired after 2 days, prune them from localStorage immediately
+    if (hasExpired) {
+      window.localStorage.setItem(storageKey, JSON.stringify(validJobs));
+      // Notify active listeners of expiry without synchronous recursion
+      setTimeout(() => {
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event(changeEvent));
+        }
+      }, 0);
+    }
 
     return validJobs.map((job) => {
       const isRemote =
@@ -127,7 +245,11 @@ export function readAppliedJobs(): AppliedJob[] {
         location: job.location ?? null,
         country: job.country ?? null,
         is_remote: isRemote,
-        role_type: job.role_type === "ai" ? "ai" : "sde",
+        role_type: (job.role_type === "frontend" ||
+        job.role_type === "backend" ||
+        job.role_type === "full_stack"
+          ? job.role_type
+          : "sde") as JobCategory,
         apply_url: job.apply_url,
         description: job.description ?? null,
         first_seen_at: job.first_seen_at,
@@ -164,8 +286,15 @@ export function saveAppliedJobs(jobs: AppliedJob[]) {
 }
 
 export function addAppliedJob(job: Job) {
+  // Permanently record that this job was applied so it is deleted from the active list
+  markJobAsAppliedHistory(job.id);
+
   const current = readAppliedJobs();
-  if (current.some((item) => item.id === job.id)) return;
+  if (current.some((item) => item.id === job.id)) {
+    // Already in active applied list, trigger event to ensure UI is in sync
+    window.dispatchEvent(new Event(changeEvent));
+    return;
+  }
   const defaultFollowUp = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const newEntry: AppliedJob = {
     ...job,
@@ -196,9 +325,20 @@ export function updateAppliedJob(id: string, updates: Partial<AppliedJob>) {
   saveAppliedJobs(next);
 }
 
-export function removeAppliedJob(id: string) {
+export function removeAppliedJob(id: string, removeFromHistory: boolean = false) {
   const current = readAppliedJobs();
   saveAppliedJobs(current.filter((item) => item.id !== id));
+
+  if (removeFromHistory && typeof window !== "undefined") {
+    try {
+      const raw = window.localStorage.getItem(appliedHistoryKey);
+      const list: unknown = JSON.parse(raw ?? "[]");
+      if (Array.isArray(list)) {
+        const nextList = list.filter((item) => item !== id);
+        window.localStorage.setItem(appliedHistoryKey, JSON.stringify(nextList));
+      }
+    } catch {}
+  }
 }
 
 export function subscribeToAppliedJobChanges(callback: () => void) {

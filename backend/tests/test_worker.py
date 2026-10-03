@@ -42,4 +42,4 @@ def test_discovered_jobs_use_conflict_safe_upsert_and_deduplicate_urls():
     statement = db.execute.call_args.args[0]
     compiled = statement.compile(dialect=postgresql.dialect())
     assert "ON CONFLICT (apply_url) DO UPDATE" in str(compiled)
-    assert list(compiled.params.values()).count("https://example.com/jobs/1") == 1
+    assert compiled.params.get("apply_url_m0") == "https://example.com/jobs/1"

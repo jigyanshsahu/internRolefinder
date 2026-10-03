@@ -157,7 +157,8 @@ export default function JobList({
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn-apply"
-                title="Open employer application directly on ATS"
+                onClick={() => onAction(job)}
+                title="Open employer application directly on ATS and mark as applied"
               >
                 Apply Direct <span aria-hidden="true">↗</span>
               </a>
@@ -166,8 +167,9 @@ export default function JobList({
                 className={`application-action ${applied ? "btn-applied" : "btn-mark"}`}
                 disabled={applied && disableAppliedAction}
                 onClick={() => onAction(job)}
+                title="Mark this role as applied and remove it from list"
               >
-                {applied && disableAppliedAction ? "✓ Saved" : actionLabel}
+                {applied && disableAppliedAction ? "✓ Applied" : actionLabel}
               </button>
             </div>
           </article>

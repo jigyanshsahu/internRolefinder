@@ -78,9 +78,22 @@ def test_requires_internship_in_title_even_when_metadata_mentions_it():
     "DevOps Intern",
     "Sr. Software Engineer Intern",
     "Senior Software Engineer Intern",
+    "Lead Software Engineer Intern",
+    "Principal Software Engineer Intern",
+    "Staff Software Engineer Intern",
+    "Software Architect Intern",
+    "Director of Software Engineering Intern",
+    "VP Software Engineering Intern",
+    "Software Engineer II Intern",
+    "Software Engineer III Intern",
 ])
 def test_rejects_non_software_and_senior_internships(title):
     assert classify_role(title) is None
+
+
+def test_rejects_internship_with_senior_metadata():
+    assert classify_role("Software Engineer Intern", "Senior level") is None
+    assert classify_role("Software Engineer Intern", "Director of engineering") is None
 
 
 def test_rejects_generic_engineering_internship_without_software_signal():

@@ -3,7 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import JobList, { jobsPerPage, type Job, type JobCategory } from "./components/JobList";
-import { addAppliedJob, readAppliedJobs, subscribeToAppliedJobChanges } from "./applied-storage";
+import {
+  addAppliedJob,
+  readAppliedHistoryIds,
+  readAppliedJobs,
+  subscribeToAppliedJobChanges,
+} from "./applied-storage";
 
 type RoleFilter = "all" | JobCategory;
 
@@ -33,7 +38,16 @@ const CATEGORIES: { key: RoleFilter; label: string }[] = [
   { key: "full_stack", label: "Fullstack Intern" },
 ];
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+function getApiUrl(): string {
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host === "localhost" || host === "127.0.0.1") {
+      return "";
+    }
+  }
+  const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || "";
+  return rawApiUrl.replace(/\/+$/, "").replace(/\/api$/, "");
+}
 
 export default function Home() {
   const [role, setRole] = useState<RoleFilter>("all");
@@ -54,6 +68,14 @@ export default function Home() {
   const [queryReady, setQueryReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Auto-hide applied toast after 4 seconds
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timer = setTimeout(() => setToastMessage(null), 4000);
+    return () => clearTimeout(timer);
+  }, [toastMessage]);
 
   // Debounce search query
   useEffect(() => {
@@ -78,7 +100,8 @@ export default function Home() {
     if (debouncedSearch.trim()) {
       params.set("search", debouncedSearch.trim());
     }
-    return `${apiUrl}/api/jobs?${params.toString()}`;
+    const base = getApiUrl();
+    return `${base}/api/jobs?${params.toString()}`;
   }, [page, role, remoteOnly, startupsOnly, debouncedSearch]);
 
   // Sync initial state from URL query
@@ -114,29 +137,49 @@ export default function Home() {
     return () => window.removeEventListener("popstate", syncFromUrl);
   }, []);
 
-  // Load applied jobs for tracking
+  // Load applied jobs and history for tracking and filtering
   useEffect(() => {
     const updateLocalApplied = () => {
       const stored = readAppliedJobs();
       setAppliedJobsCount(stored.length);
-      setAppliedIds(new Set(stored.map((job) => job.id)));
+      const historyIds = readAppliedHistoryIds();
+      setAppliedIds(historyIds);
       setApplicationsLoaded(true);
     };
     updateLocalApplied();
     return subscribeToAppliedJobChanges(updateLocalApplied);
   }, []);
 
+  // Active unapplied jobs visible on current page
+  const visibleJobs = useMemo(() => {
+    return jobs.filter((job) => !appliedIds.has(job.id));
+  }, [jobs, appliedIds]);
+
   // Fetch summary counts for tabs
   useEffect(() => {
-    fetch(`${apiUrl}/api/jobs/summary?remote_only=${remoteOnly}&startups_only=${startupsOnly}`)
-      .then((res) => (res.ok ? res.json() : null))
+    const base = getApiUrl();
+    const primaryUrl = `${base}/api/jobs/summary?remote_only=${remoteOnly}&startups_only=${startupsOnly}`;
+    const fallbackUrl = `/api/jobs/summary?remote_only=${remoteOnly}&startups_only=${startupsOnly}`;
+
+    fetch(primaryUrl, {
+      headers: { "ngrok-skip-browser-warning": "true" },
+    })
+      .then((res) => {
+        if (res.ok) return res.json();
+        if (primaryUrl !== fallbackUrl) {
+          return fetch(fallbackUrl, {
+            headers: { "ngrok-skip-browser-warning": "true" },
+          }).then((r) => (r.ok ? r.json() : null));
+        }
+        return null;
+      })
       .then((data: SummaryResponse | null) => {
         if (data) setSummary(data);
       })
       .catch(() => {});
   }, [remoteOnly, startupsOnly]);
 
-  // Fetch jobs for current query
+  // Fetch jobs for current query with resilient fallback
   useEffect(() => {
     if (!queryReady) return;
     let active = true;
@@ -144,13 +187,30 @@ export default function Home() {
     setLoading(true);
     setError("");
 
-    fetch(endpoint, { signal: controller.signal })
-      .then((response) =>
-        response.ok
-          ? response.json()
-          : Promise.reject(new Error("Could not load jobs from server."))
-      )
-      .then((data: JobsResponse) => {
+    const fetchWithFallback = async () => {
+      try {
+        let response = await fetch(endpoint, {
+          signal: controller.signal,
+          headers: { "ngrok-skip-browser-warning": "true" },
+        });
+
+        // If configured external API failed (e.g. 404 or tunnel down), fallback to local /api rewrite proxy
+        if (!response.ok && (endpoint.startsWith("http://") || endpoint.startsWith("https://"))) {
+          const fallbackUrl = endpoint.replace(/^https?:\/\/[^\/]+/, "");
+          const fallbackRes = await fetch(fallbackUrl, {
+            signal: controller.signal,
+            headers: { "ngrok-skip-browser-warning": "true" },
+          });
+          if (fallbackRes.ok) {
+            response = fallbackRes;
+          }
+        }
+
+        if (!response.ok) {
+          throw new Error("Could not load jobs from server.");
+        }
+
+        const data: JobsResponse = await response.json();
         if (!active) return;
         setJobs(data.items);
         setTotal(data.total);
@@ -158,13 +218,16 @@ export default function Home() {
         if (data.page !== page) {
           setPage(data.page);
         }
-      })
-      .catch((reason: Error) => {
-        if (active && reason.name !== "AbortError") setError(reason.message);
-      })
-      .finally(() => {
+      } catch (reason: any) {
+        if (active && reason.name !== "AbortError") {
+          setError(reason.message || "Could not load jobs from server.");
+        }
+      } finally {
         if (active) setLoading(false);
-      });
+      }
+    };
+
+    fetchWithFallback();
 
     return () => {
       active = false;
@@ -249,6 +312,8 @@ export default function Home() {
 
   const markApplied = (job: Job) => {
     addAppliedJob(job);
+    const company = job.company ? `${job.company} — ` : "";
+    setToastMessage(`✓ Applied: "${company}${job.title}" removed from list & tracked for 2 days.`);
   };
 
   const getCategoryCount = (key: RoleFilter): number | null => {
@@ -423,7 +488,7 @@ export default function Home() {
 
         {error && (
           <div className="status-banner error">
-            <p>{error} Ensure the backend API is running on localhost:8000, then refresh.</p>
+            <p>{error} Ensure the backend API is running and reachable, then refresh.</p>
           </div>
         )}
 
@@ -448,7 +513,10 @@ export default function Home() {
         {!loading && !error && total > 0 && (
           <div className="result-meta-row">
             <span className="result-count">
-              Showing <strong>{jobs.length}</strong> of <strong>{total}</strong> verified roles
+              Showing <strong>{visibleJobs.length}</strong> active roles
+              {appliedIds.size > 0 && (
+                <span className="meta-applied-note"> ({appliedIds.size} applied removed)</span>
+              )}
               {startupsOnly ? " (Startups Only)" : ""}
               {remoteOnly ? " (Remote Only)" : ""}
               {debouncedSearch ? ` for "${debouncedSearch}"` : ""}
@@ -459,9 +527,35 @@ export default function Home() {
           </div>
         )}
 
-        {!loading && !error && jobs.length > 0 && applicationsLoaded && (
+        {!loading && !error && jobs.length > 0 && visibleJobs.length === 0 && applicationsLoaded && (
+          <div className="status-banner empty">
+            <p className="empty-title">All roles on this page applied to! 🎉</p>
+            <p className="empty-desc">
+              You have applied to all positions on page {page}. They have been removed from this list and are saved in your Applied Tracker for 2 days.
+            </p>
+            <div style={{ display: "flex", gap: "12px", justifyContent: "center", marginTop: "16px", flexWrap: "wrap" }}>
+              {page < totalPages && (
+                <button
+                  type="button"
+                  className="filter-btn selected"
+                  onClick={() => {
+                    setPage(page + 1);
+                    pushUrlState({ page: page + 1 });
+                  }}
+                >
+                  Go to Next Page ({page + 1}) →
+                </button>
+              )}
+              <Link href="/applied" className="filter-btn" style={{ textDecoration: "none" }}>
+                View Applied Tracker ({appliedJobsCount}) →
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {!loading && !error && visibleJobs.length > 0 && applicationsLoaded && (
           <JobList
-            jobs={jobs}
+            jobs={visibleJobs}
             page={page}
             pageCount={totalPages}
             onPageChange={(nextPage) => {
@@ -469,12 +563,27 @@ export default function Home() {
               pushUrlState({ page: nextPage });
             }}
             appliedIds={appliedIds}
-            actionLabel="Save & Track"
-            disableAppliedAction
+            actionLabel="Mark as Applied"
+            disableAppliedAction={false}
             onAction={markApplied}
           />
         )}
       </section>
+
+      {toastMessage && (
+        <div className="action-toast" role="status" aria-live="polite">
+          <span className="toast-icon">🚀</span>
+          <span>{toastMessage}</span>
+          <button
+            type="button"
+            className="toast-close-btn"
+            onClick={() => setToastMessage(null)}
+            aria-label="Close notification"
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </main>
   );
 }

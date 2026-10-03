@@ -11,13 +11,18 @@ from app.crawler import (
     discover_indian_startup_boards,
     discover_jobs_from_public_ats,
     discover_jobs_from_verified_listings,
+    get_ats_name,
     is_active,
+    validate_candidate_jobs,
 )
+from app.services.job_validator import is_generic_careers_url, validate_job_url
 from app.database import SessionLocal
 from app.models import CompanySeed, Job, StartupBoard
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("job_validator").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 settings = get_settings()
 celery_app = Celery("internrolefinder", broker=settings.redis_url, backend=settings.redis_url)
@@ -52,6 +57,13 @@ def _upsert_discovered_jobs(db, discovered_jobs) -> int:
             "role_type": job.role_type,
             "apply_url": apply_url,
             "source_url": job.source_url,
+            "source": getattr(job, "source", None) or get_ats_name(apply_url).lower(),
+            "source_job_id": getattr(job, "source_job_id", None),
+            "original_url": getattr(job, "original_url", None) or apply_url,
+            "job_url": getattr(job, "job_url", None) or apply_url,
+            "final_url": getattr(job, "final_url", None) or apply_url,
+            "status": "active",
+            "last_verified_at": func.now(),
         })
     if not rows_by_url:
         return 0
@@ -63,6 +75,12 @@ def _upsert_discovered_jobs(db, discovered_jobs) -> int:
         index_elements=[Job.apply_url],
         set_={
             "last_checked_at": func.now(),
+            "last_verified_at": func.now(),
+            "status": "active",
+            "source": func.coalesce(excluded.source, Job.source),
+            "source_job_id": func.coalesce(excluded.source_job_id, Job.source_job_id),
+            "job_url": func.coalesce(excluded.job_url, Job.job_url),
+            "final_url": func.coalesce(excluded.final_url, Job.final_url),
             "role_type": excluded.role_type,
             "location": func.coalesce(excluded.location, Job.location),
             "country": func.coalesce(excluded.country, Job.country),
@@ -85,8 +103,13 @@ def discover_jobs() -> int:
             for board in db.scalars(select(StartupBoard)).all()
         ]
         public_jobs = asyncio.run(discover_jobs_from_public_ats(startup_boards))
-        verified_jobs = asyncio.run(discover_jobs_from_verified_listings(limit=500))
-        discovered = _upsert_discovered_jobs(db, public_jobs + verified_jobs)
+        verified_jobs = asyncio.run(discover_jobs_from_verified_listings(limit=1500))
+        valid_discovered = [
+            j for j in (public_jobs + verified_jobs)
+            if not is_generic_careers_url(j.apply_url)[0]
+        ]
+        validated_jobs = asyncio.run(validate_candidate_jobs(valid_discovered))
+        discovered = _upsert_discovered_jobs(db, validated_jobs)
         db.commit()
     finally:
         db.close()
@@ -188,14 +211,21 @@ def verify_jobs() -> int:
     try:
         removed = purge_stale_jobs(db, cutoff)
         for job in db.scalars(select(Job)).all():
-            active = asyncio.run(is_active(job.apply_url))
-            if active is None:
-                continue
-            if active:
-                job.last_checked_at = datetime.now(timezone.utc)
-            else:
+            res = asyncio.run(validate_job_url(job.apply_url, company=job.company, title=job.title))
+            if not res.is_valid:
                 db.delete(job)
                 removed += 1
+            else:
+                job.status = "active"
+                job.final_url = res.final_url
+                job.job_url = res.final_url
+                job.apply_url = res.final_url
+                if res.source:
+                    job.source = res.source
+                if res.source_job_id:
+                    job.source_job_id = res.source_job_id
+                job.last_verified_at = datetime.now(timezone.utc)
+                job.last_checked_at = datetime.now(timezone.utc)
         db.commit()
     finally:
         db.close()

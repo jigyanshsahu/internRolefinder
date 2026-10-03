@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://internrolefinder:change-me@db:5432/internrolefinder"
     redis_url: str = "redis://redis:6379/0"
     frontend_origin: str = "http://localhost:3000"
+    cors_origins: str = ""
+    cors_origin_regex: str = r"^https?://.*\.ngrok(-free)?\.(app|io)(:[0-9]+)?$"
     public_ats_company_catalog_url: str = "https://raw.githubusercontent.com/ConorsCode/open-jobs-data/main/companies.json"
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-2.5-flash"

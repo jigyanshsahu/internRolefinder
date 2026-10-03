@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Literal
-from fastapi import Depends, FastAPI, Query
+from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import and_, case, func, inspect, or_, select, text
 from sqlalchemy.orm import Session
@@ -10,17 +10,33 @@ from app.crawler import _board_url, canonical_url, get_ats_name
 from app.database import Base, SessionLocal, engine, get_db
 from app.models import CompanySeed, Job, RoleType, StartupBoard
 from app.schemas import CompanySeedOut, JobOut, JobPageOut, SummaryOut
-from app.worker import _upsert_discovered_jobs, celery_app, purge_stale_jobs
+from app.worker import celery_app, purge_stale_jobs
 from app.company_seeds import COMPANY_SEEDS
-from app.indian_jobs_data import INDIAN_COMPANIES_LIST, INDIAN_INTERNSHIP_SEEDS, STARTUP_COMPANIES_LIST
+from app.indian_jobs_data import INDIAN_COMPANIES_LIST, STARTUP_COMPANIES_LIST
 
 settings = get_settings()
+
+
+def get_allowed_origins() -> list[str]:
+    origins = {settings.frontend_origin.strip(), "http://localhost:3000"}
+    if settings.cors_origins:
+        for origin in settings.cors_origins.split(","):
+            cleaned = origin.strip()
+            if cleaned:
+                origins.add(cleaned)
+    return [o for o in origins if o]
+
+
+allowed_origins = get_allowed_origins()
+allow_all = "*" in allowed_origins
+
 app = FastAPI(title="InternRoleFinder API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_origin, "http://localhost:3000"],
-    allow_credentials=False,
-    allow_methods=["GET"],
+    allow_origins=["*"] if allow_all else allowed_origins,
+    allow_origin_regex=None if allow_all else (settings.cors_origin_regex or None),
+    allow_credentials=not allow_all,
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -54,6 +70,23 @@ def create_tables() -> None:
             connection.execute(text("ALTER TABLE jobs ADD COLUMN description TEXT"))
         if "posted_at" not in job_columns:
             connection.execute(text("ALTER TABLE jobs ADD COLUMN posted_at TIMESTAMP WITH TIME ZONE"))
+        if "source" not in job_columns:
+            connection.execute(text("ALTER TABLE jobs ADD COLUMN source VARCHAR(100)"))
+        if "source_job_id" not in job_columns:
+            connection.execute(text("ALTER TABLE jobs ADD COLUMN source_job_id VARCHAR(255)"))
+        if "original_url" not in job_columns:
+            connection.execute(text("ALTER TABLE jobs ADD COLUMN original_url TEXT"))
+        if "job_url" not in job_columns:
+            connection.execute(text("ALTER TABLE jobs ADD COLUMN job_url TEXT"))
+        if "final_url" not in job_columns:
+            connection.execute(text("ALTER TABLE jobs ADD COLUMN final_url TEXT"))
+        if "status" not in job_columns:
+            connection.execute(text("ALTER TABLE jobs ADD COLUMN status VARCHAR(50) NOT NULL DEFAULT 'active'"))
+        if "last_verified_at" not in job_columns:
+            connection.execute(text("ALTER TABLE jobs ADD COLUMN last_verified_at TIMESTAMP WITH TIME ZONE"))
+
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_jobs_status ON jobs(status)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_jobs_source ON jobs(source)"))
 
         connection.execute(text("UPDATE jobs SET role_type = 'sde' WHERE role_type::text IN ('ai', 'other', 'web_engineer')"))
         # Fix inadvertent Indianapolis match and correctly set country to India for Indian hubs
@@ -97,26 +130,6 @@ def create_tables() -> None:
             ))
         db.commit()
 
-        # Seed verified Indian & high-growth startup company internship roles
-        from app.crawler import ExtractedJob
-        indian_jobs_to_upsert = [
-            ExtractedJob(
-                title=item["title"],
-                company=item["company"],
-                location=item["location"],
-                country=item.get("country", "India"),
-                is_remote=item.get("is_remote", False),
-                is_startup=item.get("is_startup", True),
-                role_type=item["role_type"],
-                apply_url=item["apply_url"],
-                source_url=item["source_url"],
-                description=item.get("description"),
-            )
-            for item in INDIAN_INTERNSHIP_SEEDS
-        ]
-        _upsert_discovered_jobs(db, indian_jobs_to_upsert)
-        db.commit()
-
         # Ensure all existing jobs conform to valid role categories
         for job in db.scalars(select(Job)).all():
             classified = classify_role(job.title)
@@ -125,18 +138,6 @@ def create_tables() -> None:
             else:
                 job.role_type = classified
         db.commit()
-
-        # Ensure database maintains at least 200 active roles
-        active_count = db.scalar(select(func.count(Job.id)).where(Job.last_checked_at >= verification_cutoff)) or 0
-        if active_count < 200:
-            import asyncio
-            from app.crawler import discover_jobs_from_verified_listings
-            try:
-                verified_jobs = asyncio.run(discover_jobs_from_verified_listings(limit=500))
-                _upsert_discovered_jobs(db, verified_jobs)
-                db.commit()
-            except Exception:
-                pass
     finally:
         db.close()
 
@@ -146,6 +147,21 @@ def create_tables() -> None:
         celery_app.send_task("app.worker.expire_stale_jobs")
     except Exception:
         pass
+
+
+@app.get("/")
+def root() -> dict[str, str]:
+    return {
+        "status": "ok",
+        "service": "InternRoleFinder API",
+        "health": "/api/health",
+        "docs": "/docs",
+    }
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return Response(status_code=204)
 
 
 @app.get("/api/health")
@@ -169,7 +185,7 @@ def jobs(
     db: Session = Depends(get_db),
 ):
     cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.verification_max_age_hours)
-    filters = [Job.last_checked_at >= cutoff]
+    filters = [Job.last_checked_at >= cutoff, or_(Job.status == "active", Job.status.is_(None))]
 
     if role_type and role_type != "all":
         filters.append(Job.role_type == RoleType(role_type))
@@ -244,7 +260,14 @@ def jobs(
             role_type=job.role_type,
             description=job.description,
             posted_at=job.posted_at,
-            apply_url=job.apply_url,
+            apply_url=job.final_url or job.job_url or job.apply_url,
+            source=job.source,
+            source_job_id=job.source_job_id,
+            original_url=job.original_url or job.apply_url,
+            job_url=job.job_url or job.final_url or job.apply_url,
+            final_url=job.final_url or job.job_url or job.apply_url,
+            status=job.status or "active",
+            last_verified_at=job.last_verified_at,
             first_seen_at=job.first_seen_at,
             last_checked_at=job.last_checked_at,
         )
@@ -267,7 +290,7 @@ def summary(
     db: Session = Depends(get_db),
 ):
     cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.verification_max_age_hours)
-    filters = [Job.last_checked_at >= cutoff]
+    filters = [Job.last_checked_at >= cutoff, or_(Job.status == "active", Job.status.is_(None))]
     if isinstance(remote_only, bool) and remote_only:
         filters.append(Job.is_remote.is_(True))
     if isinstance(startups_only, bool) and startups_only:

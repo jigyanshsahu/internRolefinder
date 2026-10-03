@@ -6,6 +6,7 @@ import {
   type AppliedJob,
   type InterviewStage,
   STAGE_CONFIG,
+  getRemainingAppliedTime,
   readAppliedJobs,
   removeAppliedJob,
   subscribeToAppliedJobChanges,
@@ -32,6 +33,14 @@ export default function AppliedPage() {
 
   useEffect(() => subscribeToAppliedJobChanges(() => setJobs(readAppliedJobs())), []);
 
+  // Live timer: refreshes countdowns and auto-prunes expired jobs every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setJobs(readAppliedJobs());
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
   const handleStageChange = (jobId: string, nextStage: InterviewStage) => {
     updateAppliedJob(jobId, { stage: nextStage });
   };
@@ -44,7 +53,7 @@ export default function AppliedPage() {
           <div>
             <h1>Application Tracker</h1>
             <p className="subtle">
-              Manage your saved applications and update your interview status. Saved locally in your browser.
+              Manage your active applications and track interview rounds. Applications are kept here for 2 days, then automatically cleared.
             </p>
           </div>
         </div>
@@ -60,6 +69,16 @@ export default function AppliedPage() {
         </Link>
       </div>
 
+      {/* 2-Day Policy Banner */}
+      <div className="applied-policy-banner">
+        <div className="applied-policy-content">
+          <span className="applied-policy-icon" aria-hidden="true">⏱️</span>
+          <div>
+            <strong>48-Hour Active Tracking Window:</strong> Roles you apply to are tracked here for <strong>2 days</strong> to help you complete online assessments, screening rounds, and recruiter follow-ups. After 2 days, entries are automatically cleared to keep your pipeline fresh.
+          </div>
+        </div>
+      </div>
+
       <section aria-live="polite" className="applied-list-section">
         {!loaded && (
           <div className="loading-state">
@@ -70,9 +89,9 @@ export default function AppliedPage() {
 
         {loaded && jobs.length === 0 && (
           <div className="status-banner empty">
-            <p className="empty-title">No applications tracked yet.</p>
+            <p className="empty-title">No applications tracked right now.</p>
             <p className="empty-desc">
-              Browse newly verified roles on the homepage and click &ldquo;Save & Track&rdquo; on any role to keep track of it here.
+              When you apply to a role on the homepage, it is removed from the active list and tracked here for 2 days.
             </p>
             <Link href="/" className="btn-primary" style={{ marginTop: 12, display: "inline-block" }}>
               Explore Active Internships →
@@ -85,6 +104,7 @@ export default function AppliedPage() {
             {jobs.map((job) => {
               const stageInfo = STAGE_CONFIG[job.stage] || STAGE_CONFIG.applied;
               const daysApplied = daysBetween(job.applied_at);
+              const remainingTime = getRemainingAppliedTime(job.applied_at);
 
               return (
                 <article key={job.id} className="applied-card">
@@ -100,6 +120,13 @@ export default function AppliedPage() {
                         <span className="meta-separator">•</span>
                         <span className="days-applied-text">
                           Applied {daysApplied === 0 ? "today" : `${daysApplied}d ago`}
+                        </span>
+                        <span className="meta-separator">•</span>
+                        <span
+                          className="badge-expiry"
+                          title="This application will be automatically cleared from this tracker 48 hours after applying"
+                        >
+                          ⏳ {remainingTime.formattedText}
                         </span>
                       </div>
                     </div>

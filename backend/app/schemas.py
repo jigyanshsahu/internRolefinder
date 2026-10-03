@@ -17,7 +17,14 @@ class JobOut(BaseModel):
     role_type: RoleType
     description: str | None = None
     posted_at: datetime | None = None
-    apply_url: HttpUrl
+    apply_url: str
+    source: str | None = None
+    source_job_id: str | None = None
+    original_url: str | None = None
+    job_url: str | None = None
+    final_url: str | None = None
+    status: str = "active"
+    last_verified_at: datetime | None = None
     first_seen_at: datetime
     last_checked_at: datetime
 

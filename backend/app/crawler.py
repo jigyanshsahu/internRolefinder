@@ -15,6 +15,8 @@ import httpx
 from app.config import get_settings
 from app.classifier import classify_role
 from app.types import RoleType
+from app.services.job_validator import is_generic_careers_url, validate_job_url
+from app.aggregators import AGGREGATOR_DOMAINS, is_aggregator_domain
 
 CATALOG_ATS = {"greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "keka", "freshteam", "zohorecruit"}
 CLOSED_TERMS = (
@@ -34,22 +36,6 @@ CLOSED_TERMS = (
     "application closed",
     "no longer active",
 )
-AGGREGATOR_DOMAINS = {
-    "linkedin.com", "indeed.com", "glassdoor.com", "internshala.com",
-    "naukri.com", "wellfound.com", "angel.co", "cutshort.io",
-    "foundit.in", "simplyhired.com", "simplyhired.co.in", "shine.com",
-    "instahyre.com", "cuvette.tech", "jobaaj.com", "unstop.com",
-    "timesjobs.com", "freshersworld.com", "hirist.tech", "hirist.com",
-    "ziprecruiter.com", "monster.com", "careerbuilder.com",
-}
-
-
-def is_aggregator_domain(url_or_host: str) -> bool:
-    if not url_or_host:
-        return False
-    parsed = urlsplit(url_or_host) if "://" in url_or_host else None
-    host = (parsed.hostname if parsed else url_or_host or "").lower().removeprefix("www.")
-    return any(host == domain or host.endswith(f".{domain}") for domain in AGGREGATOR_DOMAINS)
 
 INDIA_CITY_PATTERN = re.compile(
     r"\b(bangalore|bengaluru|hyderabad|mumbai|delhi|gurgaon|gurugram|noida|pune|chennai|kolkata|ahmedabad|jaipur|kochi|indore|thiruvananthapuram)\b",
@@ -70,6 +56,11 @@ class ExtractedJob:
     description: str | None = None
     posted_at: datetime | None = None
     is_startup: bool = False
+    source: str | None = None
+    source_job_id: str | None = None
+    job_url: str | None = None
+    final_url: str | None = None
+    original_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -425,9 +416,12 @@ def _normalize_schema_jobs(company: str, page_url: str, source_url: str, html: s
             role_type = classify_role(title, role_context)
             apply_url = posting.get("url")
             if not isinstance(apply_url, str) or not apply_url.strip():
-                apply_url = page_url
+                continue
             apply_url = urljoin(page_url, apply_url)
-            if not role_type or urlsplit(apply_url).scheme not in {"http", "https"} or is_aggregator_domain(apply_url):
+            if apply_url.rstrip("/") == page_url.rstrip("/"):
+                continue
+            is_gen, _ = is_generic_careers_url(apply_url)
+            if is_gen or not role_type or urlsplit(apply_url).scheme not in {"http", "https"} or is_aggregator_domain(apply_url):
                 continue
             location, remote = _schema_location(posting)
             remote = remote or _is_remote(location)
@@ -596,6 +590,7 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                 "",
                 item.get("content"),
                 item.get("updated_at") or item.get("created_at"),
+                str(item.get("id")),
             )
             for item in items
             if item.get("id")
@@ -612,6 +607,7 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                 _role_context(item.get("categories", {}).get("commitment"), item.get("categories", {}).get("team")) if isinstance(item.get("categories"), dict) else "",
                 item.get("descriptionPlain") or item.get("description"),
                 item.get("createdAt"),
+                str(item.get("id")) if item.get("id") else None,
             )
             for item in items
         )
@@ -627,6 +623,7 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                 _role_context(item.get("employmentType"), item.get("department")),
                 item.get("descriptionPlain") or item.get("descriptionHtml") or item.get("description"),
                 item.get("publishedAt"),
+                str(item.get("id")) if item.get("id") else None,
             )
             for item in items
         )
@@ -654,6 +651,7 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                 ),
                 item.get("jobAd"),
                 item.get("releasedDate"),
+                str(item.get("id")) if item.get("id") else None,
             )
             for item in items
         )
@@ -672,6 +670,7 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                 _role_context(item.get("employment_type"), item.get("experience"), item.get("workplace_type")),
                 item.get("description"),
                 item.get("created_at") or item.get("published_on"),
+                str(item.get("id") or item.get("shortcode") or "") or None,
             )
             for item in items
         )
@@ -691,6 +690,7 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                 _role_context(item.get("employment_type_code"), item.get("experience_code")),
                 item.get("description"),
                 item.get("created_at"),
+                str(item.get("id")) if item.get("id") else None,
             )
             for item in items
         )
@@ -712,6 +712,7 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                 ),
                 item.get("description") or item.get("bulletFields"),
                 item.get("postedOn"),
+                str(item.get("bulletFields", [None])[0] if isinstance(item.get("bulletFields"), list) and item.get("bulletFields") else item.get("externalPath", "")) or None,
             )
             for item in items
         )
@@ -727,6 +728,7 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                 _role_context(item.get("job_type"), item.get("department")),
                 item.get("description"),
                 item.get("created_at") or item.get("published_at"),
+                str(item.get("id")) if item.get("id") else None,
             )
             for item in items
             if isinstance(item, dict)
@@ -743,6 +745,7 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                 _role_context(item.get("jobType"), item.get("department")),
                 item.get("description") or item.get("jobDescription"),
                 item.get("postedDate") or item.get("createdDate"),
+                str(item.get("id") or item.get("jobId") or "") or None,
             )
             for item in items
             if isinstance(item, dict)
@@ -762,6 +765,7 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                 _role_context(item.get("Job_Type"), item.get("Industry")),
                 item.get("Job_Description") or item.get("description"),
                 item.get("Date_Opened") or item.get("created_time"),
+                str(item.get("id")) if item.get("id") else None,
             )
             for item in items
             if isinstance(item, dict)
@@ -770,10 +774,10 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
         return []
 
     results = []
-    for title, apply_url, location, country, is_remote, role_context, description_value, posted_at_value in mappings:
+    for title, apply_url, location, country, is_remote, role_context, description_value, posted_at_value, source_job_id in mappings:
         if not isinstance(title, str) or not isinstance(apply_url, str):
             continue
-        if is_aggregator_domain(apply_url):
+        if is_aggregator_domain(apply_url) or is_generic_careers_url(apply_url)[0]:
             continue
         role_type = classify_role(title, role_context)
         if role_type and apply_url.startswith(("http://", "https://")):
@@ -790,6 +794,11 @@ def _normalize_board_jobs(company: str, platform: str, slug: str, source_url: st
                 source_url=source_url,
                 description=_schema_text(description_value)[:20_000] or None,
                 posted_at=_parse_posted_at(posted_at_value),
+                source=platform,
+                source_job_id=source_job_id,
+                job_url=canonical_url(apply_url),
+                final_url=canonical_url(apply_url),
+                original_url=canonical_url(apply_url),
             ))
     return results
 
@@ -896,20 +905,19 @@ def _active_from_response(status_code: int, text: str) -> bool | None:
 
 
 async def is_active(url: str) -> bool | None:
-    if is_aggregator_domain(url):
+    if is_aggregator_domain(url) or is_generic_careers_url(url)[0]:
         return False
     try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers={"User-Agent": "InternRoleFinderBot/1.0 (+public-link-indexer)"}) as client:
-            response = await client.get(url)
-    except httpx.HTTPError:
+        res = await validate_job_url(url)
+        return res.is_valid
+    except Exception:
         return None
-    return _active_from_response(response.status_code, response.text)
 
 
 VERIFIED_LISTINGS_URL = "https://raw.githubusercontent.com/SimplifyJobs/Summer2026-Internships/dev/.github/scripts/listings.json"
 
 
-async def discover_jobs_from_verified_listings(limit: int = 500) -> list[ExtractedJob]:
+async def discover_jobs_from_verified_listings(limit: int = 1500) -> list[ExtractedJob]:
     """Fetch active software internships from verified direct employer links."""
     headers = {"User-Agent": "InternRoleFinderBot/1.0 (+verified-indexer)"}
     try:
@@ -926,7 +934,7 @@ async def discover_jobs_from_verified_listings(limit: int = 500) -> list[Extract
         if not item.get("active", True):
             continue
         url = item.get("url", "")
-        if not url or is_aggregator_domain(url) or not url.startswith(("http://", "https://")):
+        if not url or is_aggregator_domain(url) or is_generic_careers_url(url)[0] or not url.startswith(("http://", "https://")):
             continue
         title = item.get("title", "")
         role = classify_role(title)
@@ -945,6 +953,7 @@ async def discover_jobs_from_verified_listings(limit: int = 500) -> list[Extract
                 pass
 
         is_startup = is_startup_company(item.get("company_name"), url, url)
+        canon = canonical_url(url)
         jobs.append(ExtractedJob(
             title=title[:500],
             company=(item.get("company_name") or "")[:300] or None,
@@ -953,11 +962,53 @@ async def discover_jobs_from_verified_listings(limit: int = 500) -> list[Extract
             is_remote=is_rem,
             is_startup=is_startup,
             role_type=role,
-            apply_url=canonical_url(url),
-            source_url=canonical_url(url),
+            apply_url=canon,
+            source_url=canon,
             posted_at=posted_at,
+            source=get_ats_name(canon).lower(),
+            source_job_id=str(item.get("id")) if item.get("id") else None,
+            job_url=canon,
+            final_url=canon,
+            original_url=canon,
         ))
         if len(jobs) >= limit:
             break
 
     return jobs
+
+
+async def validate_candidate_jobs(candidates: list[ExtractedJob], concurrency: int = 15) -> list[ExtractedJob]:
+    """Concurrently validate candidate jobs, ensuring only active, individual postings are returned."""
+    semaphore = asyncio.Semaphore(concurrency)
+    validated: list[ExtractedJob] = []
+
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers={"User-Agent": "InternRoleFinderBot/1.0 (+job-validator)"}) as client:
+        async def check(job: ExtractedJob):
+            async with semaphore:
+                res = await validate_job_url(job.apply_url, company=job.company, title=job.title, client=client)
+                if res.is_valid and res.final_url:
+                    return ExtractedJob(
+                        title=job.title,
+                        company=job.company,
+                        location=job.location,
+                        country=job.country,
+                        is_remote=job.is_remote,
+                        role_type=job.role_type,
+                        apply_url=res.final_url,
+                        source_url=job.source_url,
+                        description=job.description,
+                        posted_at=job.posted_at,
+                        is_startup=job.is_startup,
+                        source=res.source or job.source,
+                        source_job_id=res.source_job_id or job.source_job_id,
+                        job_url=res.final_url,
+                        final_url=res.final_url,
+                        original_url=job.apply_url,
+                    )
+                return None
+
+        results = await asyncio.gather(*(check(j) for j in candidates), return_exceptions=True)
+        for r in results:
+            if isinstance(r, ExtractedJob):
+                validated.append(r)
+    return validated

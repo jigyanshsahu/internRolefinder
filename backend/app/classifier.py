@@ -2,7 +2,14 @@ import re
 from app.types import RoleType
 
 INTERN_PATTERN = re.compile(r"\bintern(ship)?\b", re.I)
-EXCLUDED_PATTERN = re.compile(r"\b(sr\.?|senior|staff|lead|principal|manager|director|experienced)\b", re.I)
+EXCLUDED_PATTERN = re.compile(
+    r"\b(sr\.?|senior|staff|lead|principal|manager|director|vp|vice[- ]president|head of|experienced|architect|distinguished|fellow|executive|team[- ]lead|tech[- ]lead|management|supervisor|chief)\b",
+    re.I,
+)
+SENIOR_NUMERAL_PATTERN = re.compile(
+    r"\b(swe|sde|software engineer|software developer)\s+(?:ii|iii|iv|v|vi|2|3|4|5)\b",
+    re.I,
+)
 NON_SOFTWARE_PATTERN = re.compile(
     r"\b(hardware|mechanical|electrical|electronics?|process planner|manufacturing|human resources|hr intern|recruiter|recruiting|sales|marketing|accounting|finance|legal|supply chain|procurement)\b",
     re.I,
@@ -25,9 +32,13 @@ BACKEND_PATTERN = re.compile(
 
 def classify_role(title: str, text: str = "") -> RoleType | None:
     title_value = title.lower()
+    text_value = (text or "").lower()
     if not INTERN_PATTERN.search(title_value):
         return None
-    if EXCLUDED_PATTERN.search(title_value) or NON_SOFTWARE_PATTERN.search(title_value):
+    if EXCLUDED_PATTERN.search(title_value) or SENIOR_NUMERAL_PATTERN.search(title_value) or NON_SOFTWARE_PATTERN.search(title_value):
+        return None
+    # Strictly reject if metadata indicates senior level
+    if text_value and len(text_value) < 400 and re.search(r"\b(senior|mid-senior|director|executive|principal|staff engineer)\b", text_value, re.I):
         return None
     if not SOFTWARE_TITLE_PATTERN.search(title_value):
         return None
