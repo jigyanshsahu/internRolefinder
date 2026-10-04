@@ -14,6 +14,7 @@ class JobOut(BaseModel):
     is_remote: bool
     is_startup: bool = False
     ats_type: str | None = None
+    career_url: str | None = None
     role_type: RoleType
     description: str | None = None
     posted_at: datetime | None = None

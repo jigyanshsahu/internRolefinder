@@ -7,8 +7,12 @@ import {
   addAppliedJob,
   readAppliedHistoryIds,
   readAppliedJobs,
+  readInvalidatedHistoryIds,
+  addInvalidatedJobId,
   subscribeToAppliedJobChanges,
 } from "./applied-storage";
+
+export type SortOption = "direct_portal" | "india_first" | "recent";
 
 type RoleFilter = "all" | JobCategory;
 
@@ -51,6 +55,7 @@ function getApiUrl(): string {
 
 export default function Home() {
   const [role, setRole] = useState<RoleFilter>("all");
+  const [sortBy, setSortBy] = useState<SortOption>("direct_portal");
   const [remoteOnly, setRemoteOnly] = useState<boolean>(false);
   const [startupsOnly, setStartupsOnly] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -62,6 +67,7 @@ export default function Home() {
   const [totalPages, setTotalPages] = useState(1);
   const [appliedJobsCount, setAppliedJobsCount] = useState(0);
   const [appliedIds, setAppliedIds] = useState<Set<string>>(new Set());
+  const [invalidatedIds, setInvalidatedIds] = useState<Set<string>>(new Set());
   const [applicationsLoaded, setApplicationsLoaded] = useState(false);
   const [summary, setSummary] = useState<SummaryResponse | null>(null);
 
@@ -69,11 +75,15 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastCareerLink, setToastCareerLink] = useState<{ label: string; url: string } | null>(null);
 
-  // Auto-hide applied toast after 4 seconds
+  // Auto-hide applied toast after 6 seconds
   useEffect(() => {
     if (!toastMessage) return;
-    const timer = setTimeout(() => setToastMessage(null), 4000);
+    const timer = setTimeout(() => {
+      setToastMessage(null);
+      setToastCareerLink(null);
+    }, 6000);
     return () => clearTimeout(timer);
   }, [toastMessage]);
 
@@ -93,6 +103,7 @@ export default function Home() {
       page_size: String(jobsPerPage),
       remote_only: String(remoteOnly),
       startups_only: String(startupsOnly),
+      sort_by: sortBy,
     });
     if (role !== "all") {
       params.set("role_type", role);
@@ -102,7 +113,7 @@ export default function Home() {
     }
     const base = getApiUrl();
     return `${base}/api/jobs?${params.toString()}`;
-  }, [page, role, remoteOnly, startupsOnly, debouncedSearch]);
+  }, [page, role, sortBy, remoteOnly, startupsOnly, debouncedSearch]);
 
   // Sync initial state from URL query
   useEffect(() => {
@@ -110,6 +121,7 @@ export default function Home() {
       const params = new URLSearchParams(window.location.search);
       const queryPage = Number(params.get("page"));
       const queryRole = params.get("role_type") as RoleFilter | null;
+      const querySort = params.get("sort_by") as SortOption | null;
       const queryRemote = params.get("remote_only");
       const queryStartups = params.get("startups_only");
       const querySearch = params.get("search");
@@ -122,6 +134,11 @@ export default function Home() {
         setRole(queryRole);
       } else {
         setRole("all");
+      }
+      if (querySort && ["direct_portal", "india_first", "recent"].includes(querySort)) {
+        setSortBy(querySort);
+      } else {
+        setSortBy("direct_portal");
       }
       setRemoteOnly(queryRemote === "true");
       setStartupsOnly(queryStartups === "true");
@@ -144,16 +161,18 @@ export default function Home() {
       setAppliedJobsCount(stored.length);
       const historyIds = readAppliedHistoryIds();
       setAppliedIds(historyIds);
+      const invIds = readInvalidatedHistoryIds();
+      setInvalidatedIds(invIds);
       setApplicationsLoaded(true);
     };
     updateLocalApplied();
     return subscribeToAppliedJobChanges(updateLocalApplied);
   }, []);
 
-  // Active unapplied jobs visible on current page
+  // Active unapplied and non-invalidated jobs visible on current page
   const visibleJobs = useMemo(() => {
-    return jobs.filter((job) => !appliedIds.has(job.id));
-  }, [jobs, appliedIds]);
+    return jobs.filter((job) => !appliedIds.has(job.id) && !invalidatedIds.has(job.id));
+  }, [jobs, appliedIds, invalidatedIds]);
 
   // Fetch summary counts for tabs
   useEffect(() => {
@@ -249,6 +268,13 @@ export default function Home() {
       params.delete("role_type");
     }
 
+    const nextSort = overrides.sortBy !== undefined ? String(overrides.sortBy) : sortBy;
+    if (nextSort && nextSort !== "direct_portal") {
+      params.set("sort_by", nextSort);
+    } else {
+      params.delete("sort_by");
+    }
+
     const nextRemote =
       overrides.remoteOnly !== undefined ? Boolean(overrides.remoteOnly) : remoteOnly;
     if (nextRemote) {
@@ -282,6 +308,12 @@ export default function Home() {
     pushUrlState({ role: newRole, page: 1 });
   };
 
+  const handleSortChange = (newSort: SortOption) => {
+    setSortBy(newSort);
+    setPage(1);
+    pushUrlState({ sortBy: newSort, page: 1 });
+  };
+
   const handleRemoteToggle = (isRemote: boolean) => {
     setRemoteOnly(isRemote);
     setPage(1);
@@ -296,6 +328,7 @@ export default function Home() {
 
   const resetAllFilters = () => {
     setRole("all");
+    setSortBy("direct_portal");
     setRemoteOnly(false);
     setStartupsOnly(false);
     setSearchQuery("");
@@ -303,6 +336,7 @@ export default function Home() {
     setPage(1);
     pushUrlState({
       role: "all",
+      sortBy: "direct_portal",
       remoteOnly: false,
       startupsOnly: false,
       search: "",
@@ -316,6 +350,40 @@ export default function Home() {
     setToastMessage(`✓ Applied: "${company}${job.title}" removed from list & tracked for 2 days.`);
   };
 
+  const handleInvalidate = async (job: Job) => {
+    addInvalidatedJobId(job.id);
+    setInvalidatedIds((prev) => new Set([...prev, job.id]));
+    setJobs((prev) => prev.filter((j) => j.id !== job.id));
+    const company = job.company ? `${job.company} — ` : "";
+
+    if (job.career_url) {
+      setToastCareerLink({
+        label: `Browse ${job.company || "Company"} Careers`,
+        url: job.career_url,
+      });
+      setToastMessage(`⚑ Listing reported as closed/404 & removed.`);
+    } else {
+      setToastCareerLink(null);
+      setToastMessage(`⚑ Invalidation submitted: "${company}${job.title}" removed.`);
+    }
+
+    try {
+      const base = getApiUrl();
+      const primaryUrl = `${base}/api/jobs/${job.id}/invalidate`;
+      const fallbackUrl = `/api/jobs/${job.id}/invalidate`;
+      let res = await fetch(primaryUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok && primaryUrl !== fallbackUrl) {
+        await fetch(fallbackUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    } catch {}
+  };
+
   const getCategoryCount = (key: RoleFilter): number | null => {
     if (!summary) return null;
     if (key === "all") return summary.all;
@@ -327,7 +395,11 @@ export default function Home() {
   };
 
   const hasActiveFilters =
-    role !== "all" || remoteOnly || startupsOnly || debouncedSearch.trim() !== "";
+    role !== "all" ||
+    sortBy !== "direct_portal" ||
+    remoteOnly ||
+    startupsOnly ||
+    debouncedSearch.trim() !== "";
 
   return (
     <main>
@@ -453,12 +525,49 @@ export default function Home() {
           </div>
         </div>
 
+        <div className="filter-row sort-controls-row">
+          <div className="control-group">
+            <span className="filter-label">Sort Priority:</span>
+            <div className="btn-toggle-group sort-selector-group" role="group" aria-label="Sort priority">
+              <button
+                type="button"
+                className={`filter-btn sort-btn ${sortBy === "direct_portal" ? "selected is-direct-portal-active" : ""}`}
+                onClick={() => handleSortChange("direct_portal")}
+                title="Prioritize verified direct employer career portals first"
+              >
+                <span>⚡ Direct Portal First</span>
+              </button>
+              <button
+                type="button"
+                className={`filter-btn sort-btn ${sortBy === "india_first" ? "selected is-india-active" : ""}`}
+                onClick={() => handleSortChange("india_first")}
+                title="Prioritize Indian tech companies and locations first"
+              >
+                <span>🇮🇳 India First</span>
+              </button>
+              <button
+                type="button"
+                className={`filter-btn sort-btn ${sortBy === "recent" ? "selected" : ""}`}
+                onClick={() => handleSortChange("recent")}
+                title="Show most recently added verified roles first"
+              >
+                <span>🕒 Most Recent</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
         {hasActiveFilters && (
           <div className="active-filter-bar">
             <span className="active-filters-label">Active Filters:</span>
             {role !== "all" && (
               <span className="filter-tag">
                 {CATEGORIES.find((c) => c.key === role)?.label}
+              </span>
+            )}
+            {sortBy !== "direct_portal" && (
+              <span className="filter-tag tag-sort">
+                {sortBy === "india_first" ? "🇮🇳 India First" : "🕒 Most Recent"}
               </span>
             )}
             {startupsOnly && <span className="filter-tag tag-startup">🚀 Startups Only</span>}
@@ -566,6 +675,7 @@ export default function Home() {
             actionLabel="Mark as Applied"
             disableAppliedAction={false}
             onAction={markApplied}
+            onInvalidate={handleInvalidate}
           />
         )}
       </section>
@@ -574,10 +684,23 @@ export default function Home() {
         <div className="action-toast" role="status" aria-live="polite">
           <span className="toast-icon">🚀</span>
           <span>{toastMessage}</span>
+          {toastCareerLink && (
+            <a
+              href={toastCareerLink.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="toast-action-link"
+            >
+              {toastCareerLink.label} ↗
+            </a>
+          )}
           <button
             type="button"
             className="toast-close-btn"
-            onClick={() => setToastMessage(null)}
+            onClick={() => {
+              setToastMessage(null);
+              setToastCareerLink(null);
+            }}
             aria-label="Close notification"
           >
             ✕

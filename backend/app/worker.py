@@ -205,31 +205,16 @@ def discover_indian_startups() -> int:
 
 
 @celery_app.task(name="app.worker.verify_jobs")
-def verify_jobs() -> int:
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.verification_max_age_hours)
+def verify_jobs() -> dict[str, int]:
+    from app.services.bulk_verifier import run_full_verification
     db = SessionLocal()
     try:
-        removed = purge_stale_jobs(db, cutoff)
-        for job in db.scalars(select(Job)).all():
-            res = asyncio.run(validate_job_url(job.apply_url, company=job.company, title=job.title))
-            if not res.is_valid:
-                db.delete(job)
-                removed += 1
-            else:
-                job.status = "active"
-                job.final_url = res.final_url
-                job.job_url = res.final_url
-                job.apply_url = res.final_url
-                if res.source:
-                    job.source = res.source
-                if res.source_job_id:
-                    job.source_job_id = res.source_job_id
-                job.last_verified_at = datetime.now(timezone.utc)
-                job.last_checked_at = datetime.now(timezone.utc)
-        db.commit()
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.verification_max_age_hours)
+        purge_stale_jobs(db, cutoff)
+        stats = run_full_verification(db, batch_size=50, concurrency=25)
+        return stats
     finally:
         db.close()
-    return removed
 
 
 @celery_app.task(name="app.worker.expire_stale_jobs")

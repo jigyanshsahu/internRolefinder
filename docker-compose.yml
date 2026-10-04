@@ -31,6 +31,9 @@ services:
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     volumes:
       - ./backend:/app
     ports:
@@ -44,6 +47,9 @@ services:
   worker:
     build: ./backend
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     environment:
       PUBLIC_ATS_COMPANY_CATALOG_URL: ${PUBLIC_ATS_COMPANY_CATALOG_URL:-https://raw.githubusercontent.com/ConorsCode/open-jobs-data/main/companies.json}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
