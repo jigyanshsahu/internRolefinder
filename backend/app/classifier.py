@@ -15,17 +15,33 @@ NON_SOFTWARE_PATTERN = re.compile(
     re.I,
 )
 SOFTWARE_TITLE_PATTERN = re.compile(
-    r"\b(sde|swe|software (engineer|developer|development)|frontend (engineering|engineer|developer)|front[ -]?end (engineering|engineer|developer)|backend (engineering|engineer|developer)|back[ -]?end (engineering|engineer|developer)|full[ -]?stack (engineering|engineer|developer)|web engineer|web developer|web development|application developer|mobile (engineer|developer)|game developer|embedded software|systems? (engineer|developer))\b",
+    r"\b("
+    r"sde|swe|"
+    r"software (?:engineer|developer|development)|"
+    r"front[ -]?end(?: (?:engineering|engineer|developer|development|intern|internship))?|"
+    r"frontend(?: (?:engineering|engineer|developer|development|intern|internship))?|"
+    r"back[ -]?end(?: (?:engineering|engineer|developer|development|intern|internship))?|"
+    r"backend(?: (?:engineering|engineer|developer|development|intern|internship))?|"
+    r"full[ -]?stack(?: (?:engineering|engineer|developer|development|intern|internship))?|"
+    r"(?:react|angular|vue|ui[/ ]?ux|ui|next\.?js)(?: (?:engineering|engineer|developer|development|intern|internship))?|"
+    r"(?:node\.?js|python|golang|go|java|django|fastapi|flask|spring|express)(?: (?:backend|software|engineer|developer|development))|"
+    r"web (?:engineer|developer|development|intern|internship)|"
+    r"application (?:developer|engineer)|"
+    r"mobile (?:engineer|developer)|"
+    r"game developer|"
+    r"embedded software|"
+    r"systems? (?:engineer|developer)"
+    r")\b",
     re.I,
 )
 
 FULLSTACK_PATTERN = re.compile(r"\b(full[ -]?stack)\b", re.I)
 FRONTEND_PATTERN = re.compile(
-    r"\b(front[ -]?end|frontend|ui|web developer|web engineer|web development|web intern|client[ -]?side)\b",
+    r"\b(front[ -]?end|frontend|ui|web developer|web engineer|web development|web intern|client[ -]?side|react|vue|angular)\b",
     re.I,
 )
 BACKEND_PATTERN = re.compile(
-    r"\b(back[ -]?end|backend|infrastructure|distributed systems?|server|api|platform engineering)\b",
+    r"\b(back[ -]?end|backend|infrastructure|distributed systems?|server|api|platform engineering|node\.?js|django|fastapi|spring|flask)\b",
     re.I,
 )
 

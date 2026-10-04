@@ -108,3 +108,58 @@ def test_company_seed_status_api_returns_source_and_freshness_fields():
     assert response[0].company_name == "Drivetrain"
     assert response[0].status == "board_found"
     assert str(response[0].careers_url) == "https://jobs.lever.co/drivetrain"
+
+
+def test_jobs_api_sorts_by_direct_portal_first():
+    db = Mock()
+    db.scalar.return_value = 10
+    db.scalars.return_value.all.return_value = []
+
+    jobs(role_type="sde", sort_by="direct_portal", page=1, page_size=20, db=db)
+
+    query = db.scalars.call_args.args[0]
+    compiled = query.compile(dialect=postgresql.dialect())
+    statement = str(compiled)
+    ordering = statement.split("ORDER BY", 1)[1]
+    # Check that direct portal condition is present in the first CASE clause of ORDER BY
+    assert "jobs.apply_url" in ordering
+    assert any("greenhouse" in str(v) for v in compiled.params.values())
+    assert any("workday" in str(v) for v in compiled.params.values())
+
+
+def test_invalidate_single_job():
+    from app.main import invalidate_single_job
+    mock_job = Mock(id=uuid4(), title="Test Intern", company="Acme", status="active")
+    db = Mock()
+    db.scalar.return_value = mock_job
+
+    res = invalidate_single_job(job_id=mock_job.id, db=db)
+    assert res["status"] == "ok"
+    assert mock_job.status == "invalidated"
+    db.commit.assert_called_once()
+
+
+def test_redirect_to_career_page():
+    from app.main import redirect_to_career_page
+    mock_job = Mock(
+        id=uuid4(),
+        title="Frontend Intern",
+        company="Swiggy",
+        apply_url="https://careers.swiggy.com?role=frontend-intern",
+        status="active",
+    )
+    db = Mock()
+    db.scalar.return_value = mock_job
+
+    res = redirect_to_career_page(job_id=mock_job.id, db=db)
+    assert res.status_code == 307
+    assert res.headers["location"] == "https://careers.swiggy.com"
+
+
+def test_career_url_resolution():
+    from app.career_urls import get_career_url
+    assert get_career_url("Swiggy", "https://careers.swiggy.com/jobs/xyz") == "https://careers.swiggy.com"
+    assert get_career_url("Razorpay", "https://razorpay.com/jobs?role=dev") == "https://razorpay.com/jobs"
+    assert get_career_url(None, "https://jobs.ashbyhq.com/org123/456") == "https://jobs.ashbyhq.com/org123"
+    assert get_career_url(None, "https://job-boards.greenhouse.io/natera/jobs/123") == "https://job-boards.greenhouse.io/natera"
+    assert get_career_url(None, "https://jobs.lever.co/palantir/abc") == "https://jobs.lever.co/palantir"

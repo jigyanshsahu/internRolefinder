@@ -350,3 +350,25 @@ export function subscribeToAppliedJobChanges(callback: () => void) {
     window.removeEventListener("storage", callback);
   };
 }
+
+const invalidatedHistoryKey = "intern-role-finder-invalidated-history-ids";
+
+export function readInvalidatedHistoryIds(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(invalidatedHistoryKey);
+    const list: unknown = JSON.parse(raw ?? "[]");
+    return new Set(Array.isArray(list) ? list.filter((i): i is string => typeof i === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function addInvalidatedJobId(id: string) {
+  if (typeof window === "undefined") return;
+  try {
+    const current = readInvalidatedHistoryIds();
+    current.add(id);
+    window.localStorage.setItem(invalidatedHistoryKey, JSON.stringify(Array.from(current)));
+  } catch {}
+}

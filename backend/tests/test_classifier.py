@@ -7,17 +7,26 @@ def test_classifies_frontend_internship():
     assert classify_role("Frontend Engineering Intern") == RoleType.frontend
     assert classify_role("Software Engineer Intern, Frontend") == RoleType.frontend
     assert classify_role("Web Engineer Intern") == RoleType.frontend
+    assert classify_role("Frontend Intern") == RoleType.frontend
+    assert classify_role("Frontend Developer Intern") == RoleType.frontend
+    assert classify_role("React Developer Intern") == RoleType.frontend
+    assert classify_role("UI Developer Intern") == RoleType.frontend
 
 
 def test_classifies_backend_internship():
     assert classify_role("Backend Engineering Intern") == RoleType.backend
     assert classify_role("Software Developer Intern, Backend") == RoleType.backend
     assert classify_role("Software Engineer Intern - Infrastructure") == RoleType.backend
+    assert classify_role("Backend Intern") == RoleType.backend
+    assert classify_role("Backend Developer Intern") == RoleType.backend
+    assert classify_role("Python Backend Intern") == RoleType.backend
+    assert classify_role("Node.js Backend Intern") == RoleType.backend
 
 
 def test_classifies_fullstack_internship():
     assert classify_role("Fullstack Engineer Intern") == RoleType.full_stack
     assert classify_role("Full-Stack Developer Intern") == RoleType.full_stack
+    assert classify_role("Full Stack Intern") == RoleType.full_stack
     assert classify_role("Software Engineer Intern, Fullstack (Summer 2027)") == RoleType.full_stack
 
 

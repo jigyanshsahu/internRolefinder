@@ -1,12 +1,16 @@
 from datetime import datetime, timedelta, timezone
 from typing import Literal
-from fastapi import Depends, FastAPI, Response
+from uuid import UUID
+from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from sqlalchemy import and_, case, func, inspect, or_, select, text
 from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.classifier import classify_role
 from app.crawler import _board_url, canonical_url, get_ats_name
+from app.career_urls import get_career_url
 from app.database import Base, SessionLocal, engine, get_db
 from app.models import CompanySeed, Job, RoleType, StartupBoard
 from app.schemas import CompanySeedOut, JobOut, JobPageOut, SummaryOut
@@ -177,6 +181,7 @@ def company_seeds(db: Session = Depends(get_db)) -> list[CompanySeedOut]:
 @app.get("/api/jobs", response_model=JobPageOut)
 def jobs(
     role_type: Literal["all", "sde", "frontend", "backend", "full_stack"] | None = None,
+    sort_by: Literal["direct_portal", "india_first", "recent", "priority"] | None = "direct_portal",
     remote_only: bool = False,
     startups_only: bool = False,
     search: str | None = None,
@@ -216,7 +221,23 @@ def jobs(
         for board in db.scalars(select(StartupBoard)).all()
     ]
 
-    # TOP PRIORITY: Indian companies and India-located roles appear first (0 before 1)
+    # DIRECT PORTAL PRIORITY: Direct employer portals appear first (0 before 1)
+    direct_portal_condition = and_(
+        func.lower(Job.apply_url).not_ilike("%ashby%"),
+        func.lower(Job.apply_url).not_ilike("%greenhouse%"),
+        func.lower(Job.apply_url).not_ilike("%lever%"),
+        func.lower(Job.apply_url).not_ilike("%workable%"),
+        func.lower(Job.apply_url).not_ilike("%recruitee%"),
+        func.lower(Job.apply_url).not_ilike("%keka%"),
+        func.lower(Job.apply_url).not_ilike("%freshteam%"),
+        func.lower(Job.apply_url).not_ilike("%zohorecruit%"),
+        func.lower(Job.apply_url).not_ilike("%workday%"),
+        func.lower(Job.apply_url).not_ilike("%myworkdayjobs%"),
+        func.lower(Job.apply_url).not_ilike("%smartrecruiters%"),
+    )
+    direct_portal_priority = case((direct_portal_condition, 0), else_=1)
+
+    # Indian companies and India-located roles appear first (0 before 1)
     india_priority = case(
         (
             or_(
@@ -243,7 +264,13 @@ def jobs(
         else_=1,
     )
 
-    order_clauses = [india_priority, remote_priority, startup_priority, Job.first_seen_at.desc()]
+    if sort_by == "india_first":
+        order_clauses = [india_priority, direct_portal_priority, remote_priority, startup_priority, Job.first_seen_at.desc()]
+    elif sort_by == "recent":
+        order_clauses = [Job.first_seen_at.desc(), direct_portal_priority, india_priority, remote_priority, startup_priority]
+    else:  # default is direct_portal first!
+        order_clauses = [direct_portal_priority, india_priority, remote_priority, startup_priority, Job.first_seen_at.desc()]
+
     query = select(Job).where(*filters).order_by(*order_clauses)
 
     items = db.scalars(query.offset((page - 1) * page_size).limit(page_size)).all()
@@ -257,6 +284,7 @@ def jobs(
             is_remote=job.is_remote,
             is_startup=job.is_startup,
             ats_type=get_ats_name(job.apply_url),
+            career_url=get_career_url(job.company, job.apply_url),
             role_type=job.role_type,
             description=job.description,
             posted_at=job.posted_at,
@@ -313,4 +341,69 @@ def summary(
         total_remote=total_remote,
         total_startups=total_startups,
     )
+
+
+class InvalidateBatchRequest(BaseModel):
+    job_ids: list[UUID]
+    reason: str | None = "user_invalidated"
+
+
+@app.post("/api/jobs/{job_id}/invalidate")
+def invalidate_single_job(job_id: UUID, db: Session = Depends(get_db)):
+    job = db.scalar(select(Job).where(Job.id == job_id))
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job.status = "invalidated"
+    job.last_verified_at = datetime.now(timezone.utc)
+    job.last_checked_at = datetime.now(timezone.utc)
+    db.commit()
+    return {
+        "status": "ok",
+        "message": f"Job '{job.title}' marked as invalidated/expired",
+        "job_id": str(job.id),
+    }
+
+
+@app.post("/api/jobs/invalidate")
+def invalidate_jobs_batch(payload: InvalidateBatchRequest, db: Session = Depends(get_db)):
+    if not payload.job_ids:
+        raise HTTPException(status_code=400, detail="No job IDs specified")
+    jobs_to_invalidate = db.scalars(select(Job).where(Job.id.in_(payload.job_ids))).all()
+    now = datetime.now(timezone.utc)
+    for j in jobs_to_invalidate:
+        j.status = "invalidated"
+        j.last_verified_at = now
+        j.last_checked_at = now
+    db.commit()
+    return {
+        "status": "ok",
+        "invalidated_count": len(jobs_to_invalidate),
+    }
+
+
+@app.get("/api/jobs/{job_id}/career-page")
+def redirect_to_career_page(job_id: UUID, db: Session = Depends(get_db)):
+    """Redirect safely to the company's verified career portal.
+    Prevents 404 errors by guaranteeing candidates reach an active employer careers page.
+    """
+    job = db.scalar(select(Job).where(Job.id == job_id))
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    career_url = get_career_url(job.company, job.apply_url) or job.apply_url
+    return RedirectResponse(url=career_url, status_code=307)
+
+
+@app.post("/api/crawler/verify")
+def trigger_crawler_verification(db: Session = Depends(get_db)):
+    """Run full live crawler verification to detect and remove dead, closed, or 404 job postings."""
+    from app.services.bulk_verifier import run_full_verification
+    stats = run_full_verification(db, batch_size=50, concurrency=25)
+    return {
+        "status": "ok",
+        "message": "Full verification and deduplication complete",
+        "stats": stats,
+    }
+
+
+
 

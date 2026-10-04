@@ -10,7 +10,7 @@ INDIAN_COMPANIES_LIST = [
     "Classplus", "Scaler", "OneCard", "Cashfree", "ClearTax", "Smallcase", "INDmoney",
     "Fi Money", "Jupiter", "FamPay", "Drivetrain", "Merkle Science", "CloudSEK",
     "MHTECHIN", "SpotDraft", "Signzy", "Zluri", "Tecell", "Guidanz", "Shoppeal Tech",
-    "Convertly", "Dream Monks", "StoreShift", "Tvaram", "Rubrik", "Stripe",
+    "Convertly", "Dream Monks", "StoreShift", "Tvaram",
     "SigNoz", "Appwrite", "Supermemory", "Auxia", "Rivia.ai", "Bimaplan", "Datasutram",
     "Enterpret", "LimeChat", "Cardboard", "Optifye.ai", "Raven", "Paasa", "xPay", "ClickPe",
     "Nxtlogic", "Nvron", "Rechitta", "Idevify", "Crossing Infotech", "Omninext", "Best Deal Paisa",

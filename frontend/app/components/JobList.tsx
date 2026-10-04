@@ -14,6 +14,7 @@ export type Job = {
   is_remote: boolean;
   is_startup?: boolean;
   ats_type?: string | null;
+  career_url?: string | null;
   role_type: JobCategory;
   apply_url: string;
   description?: string | null;
@@ -31,6 +32,7 @@ type JobListProps = {
   actionLabel: string;
   disableAppliedAction: boolean;
   onAction: (job: Job) => void;
+  onInvalidate?: (job: Job) => void;
 };
 
 const ROLE_BADGES: Record<JobCategory, { label: string; badgeClass: string }> = {
@@ -59,6 +61,7 @@ export default function JobList({
   actionLabel,
   disableAppliedAction,
   onAction,
+  onInvalidate,
 }: JobListProps) {
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
 
@@ -120,8 +123,11 @@ export default function JobList({
                   )}
                   {isIndian && <span className="badge badge-india">🇮🇳 India</span>}
                   {job.ats_type && (
-                    <span className="badge badge-ats" title="Direct employer ATS form - verified authentic link">
-                      ✓ {job.ats_type}
+                    <span
+                      className={`badge badge-ats ${job.ats_type === "Direct Portal" ? "badge-direct-portal" : ""}`}
+                      title={job.ats_type === "Direct Portal" ? "Official direct employer career portal - highest response rate" : "Direct employer ATS form - verified authentic link"}
+                    >
+                      {job.ats_type === "Direct Portal" ? "⚡ Direct Portal" : `✓ ${job.ats_type}`}
                     </span>
                   )}
                   {isNew && <span className="badge badge-new">✨ New</span>}
@@ -153,15 +159,31 @@ export default function JobList({
 
             <div className="job-actions">
               <a
-                href={job.apply_url}
+                href={job.ats_type === "Direct Portal" ? (job.career_url || job.apply_url) : job.apply_url}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn-apply"
                 onClick={() => onAction(job)}
-                title="Open employer application directly on ATS and mark as applied"
+                title={
+                  job.ats_type === "Direct Portal"
+                    ? `Open official ${job.company || "company"} career portal`
+                    : "Open employer application directly on ATS and mark as applied"
+                }
               >
-                Apply Direct <span aria-hidden="true">↗</span>
+                {job.ats_type === "Direct Portal" ? "Career Portal" : "Apply Direct"} <span aria-hidden="true">↗</span>
               </a>
+
+              {job.career_url && job.ats_type !== "Direct Portal" && (
+                <a
+                  href={job.career_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-career-portal"
+                  title={`Open official ${job.company || "company"} career page (browse all current openings if direct link is closed/404)`}
+                >
+                  Career Page <span aria-hidden="true">↗</span>
+                </a>
+              )}
               <button
                 type="button"
                 className={`application-action ${applied ? "btn-applied" : "btn-mark"}`}
@@ -171,6 +193,16 @@ export default function JobList({
               >
                 {applied && disableAppliedAction ? "✓ Applied" : actionLabel}
               </button>
+              {onInvalidate && (
+                <button
+                  type="button"
+                  className="btn-invalidate"
+                  onClick={() => onInvalidate(job)}
+                  title="Report this listing as closed, expired, or broken to invalidate and remove it immediately"
+                >
+                  <span aria-hidden="true">⚑</span> Invalidate
+                </button>
+              )}
             </div>
           </article>
         );
