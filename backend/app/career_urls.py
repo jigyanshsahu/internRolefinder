@@ -91,6 +91,24 @@ KNOWN_COMPANY_CAREERS: dict[str, str] = {
     "railway": "https://railway.app/careers",
     "stripe": "https://stripe.com/jobs",
     "datadog": "https://careers.datadoghq.com",
+    "lyft": "https://www.lyft.com/careers",
+    "pinterest": "https://www.pinterestcareers.com",
+    "hubspot": "https://www.hubspot.com/careers",
+    "ixl learning": "https://www.ixl.com/company/careers",
+    "nuro": "https://www.nuro.ai/careers",
+    "coinbase": "https://www.coinbase.com/careers",
+    "databricks": "https://www.databricks.com/company/careers",
+    "robinhood": "https://careers.robinhood.com",
+    "haize labs": "https://www.haizelabs.com",
+    "virtu financial": "https://www.virtu.com/careers",
+    "akuna capital": "https://akunacapital.com/careers",
+    "transcard": "https://www.transcard.com/careers",
+    "north atlantic industries": "https://www.naii.com/careers",
+    "johnson & johnson": "https://www.careers.jnj.com",
+    "costar group": "https://www.costargroup.com/careers",
+    "the home depot": "https://careers.homedepot.com",
+    "rtx": "https://careers.rtx.com",
+    "hewlett packard (hp)": "https://jobs.hp.com",
 }
 
 
@@ -101,7 +119,7 @@ def get_career_url(company: str | None = None, apply_url: str | None = None) -> 
     1. Curated company mapping.
     2. ATS board extraction (Ashby, Greenhouse, Lever, SmartRecruiters, Workable).
     3. Dedicated careers subdomain or path.
-    4. Fallback root domain.
+    4. Fallback root domain (unless it's a known vendor/ATS host).
     """
     if company:
         norm = company.strip().lower()
@@ -164,13 +182,36 @@ def get_career_url(company: str | None = None, apply_url: str | None = None) -> 
 
         # Paths with /careers or /jobs
         if "/careers" in path.lower():
-            # Keep up to /careers
             idx = path.lower().find("/careers")
             return f"{scheme}://{host}{path[:idx + 8]}"
 
         if "/jobs" in path.lower():
             idx = path.lower().find("/jobs")
             return f"{scheme}://{host}{path[:idx + 5]}"
+
+        # Avoid returning third-party ATS/vendor root domains as company career sites
+        ats_vendor_domains = (
+            "careerpuck.com",
+            "paylocity.com",
+            "oraclecloud.com",
+            "myworkdayjobs.com",
+            "workday.com",
+            "icims.com",
+            "jobvite.com",
+            "taleo.net",
+            "bamboohr.com",
+            "greenhouse.io",
+            "lever.co",
+            "ashbyhq.com",
+            "smartrecruiters.com",
+            "workable.com",
+            "recruitee.com",
+            "keka.com",
+            "freshteam.com",
+            "zohorecruit.com",
+        )
+        if any(vendor in host for vendor in ats_vendor_domains):
+            return None
 
         # Fallback to root domain
         return f"{scheme}://{host}"
