@@ -22,7 +22,7 @@ settings = get_settings()
 
 
 def get_allowed_origins() -> list[str]:
-    origins = {settings.frontend_origin.strip(), "http://localhost:3000"}
+    origins = {settings.frontend_origin.strip(), "http://localhost:3000", "http://127.0.0.1:3000"}
     if settings.cors_origins:
         for origin in settings.cors_origins.split(","):
             cleaned = origin.strip()
@@ -274,33 +274,35 @@ def jobs(
     query = select(Job).where(*filters).order_by(*order_clauses)
 
     items = db.scalars(query.offset((page - 1) * page_size).limit(page_size)).all()
-    out_items = [
-        JobOut(
-            id=job.id,
-            title=job.title,
-            company=job.company,
-            location=job.location,
-            country=job.country,
-            is_remote=job.is_remote,
-            is_startup=job.is_startup,
-            ats_type=get_ats_name(job.apply_url),
-            career_url=get_career_url(job.company, job.apply_url),
-            role_type=job.role_type,
-            description=job.description,
-            posted_at=job.posted_at,
-            apply_url=job.final_url or job.job_url or job.apply_url,
-            source=job.source,
-            source_job_id=job.source_job_id,
-            original_url=job.original_url or job.apply_url,
-            job_url=job.job_url or job.final_url or job.apply_url,
-            final_url=job.final_url or job.job_url or job.apply_url,
-            status=job.status or "active",
-            last_verified_at=job.last_verified_at,
-            first_seen_at=job.first_seen_at,
-            last_checked_at=job.last_checked_at,
+    out_items = []
+    for job in items:
+        eff_apply_url = job.final_url or job.job_url or job.apply_url
+        out_items.append(
+            JobOut(
+                id=job.id,
+                title=job.title,
+                company=job.company,
+                location=job.location,
+                country=job.country,
+                is_remote=job.is_remote,
+                is_startup=job.is_startup,
+                ats_type=get_ats_name(eff_apply_url),
+                career_url=get_career_url(job.company, eff_apply_url),
+                role_type=job.role_type,
+                description=job.description,
+                posted_at=job.posted_at,
+                apply_url=eff_apply_url,
+                source=job.source,
+                source_job_id=job.source_job_id,
+                original_url=job.original_url or job.apply_url,
+                job_url=job.job_url or job.final_url or job.apply_url,
+                final_url=job.final_url or job.job_url or job.apply_url,
+                status=job.status or "active",
+                last_verified_at=job.last_verified_at,
+                first_seen_at=job.first_seen_at,
+                last_checked_at=job.last_checked_at,
+            )
         )
-        for job in items
-    ]
 
     return JobPageOut(
         items=out_items,

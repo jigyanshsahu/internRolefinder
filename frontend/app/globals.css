@@ -544,6 +544,17 @@ main {
   letter-spacing: -0.01em;
 }
 
+.job-title-link {
+  color: inherit;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.job-title-link:hover {
+  color: var(--accent-cyan);
+  text-decoration: underline;
+}
+
 .job-meta-row {
   display: flex;
   align-items: center;

@@ -177,8 +177,10 @@ export default function Home() {
   // Fetch summary counts for tabs
   useEffect(() => {
     const base = getApiUrl();
-    const primaryUrl = `${base}/api/jobs/summary?remote_only=${remoteOnly}&startups_only=${startupsOnly}`;
-    const fallbackUrl = `/api/jobs/summary?remote_only=${remoteOnly}&startups_only=${startupsOnly}`;
+    const query = `remote_only=${remoteOnly}&startups_only=${startupsOnly}`;
+    const primaryUrl = `${base}/api/jobs/summary?${query}`;
+    const fallbackUrl = `/api/jobs/summary?${query}`;
+    const directUrl = `http://127.0.0.1:8000/api/jobs/summary?${query}`;
 
     fetch(primaryUrl, {
       headers: { "ngrok-skip-browser-warning": "true" },
@@ -190,12 +192,21 @@ export default function Home() {
             headers: { "ngrok-skip-browser-warning": "true" },
           }).then((r) => (r.ok ? r.json() : null));
         }
-        return null;
+        return fetch(directUrl, {
+          headers: { "ngrok-skip-browser-warning": "true" },
+        }).then((r) => (r.ok ? r.json() : null));
       })
       .then((data: SummaryResponse | null) => {
         if (data) setSummary(data);
       })
-      .catch(() => {});
+      .catch(() => {
+        fetch(directUrl)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => {
+            if (data) setSummary(data);
+          })
+          .catch(() => {});
+      });
   }, [remoteOnly, startupsOnly]);
 
   // Fetch jobs for current query with resilient fallback
@@ -208,10 +219,27 @@ export default function Home() {
 
     const fetchWithFallback = async () => {
       try {
-        let response = await fetch(endpoint, {
-          signal: controller.signal,
-          headers: { "ngrok-skip-browser-warning": "true" },
-        });
+        let response: Response;
+        try {
+          response = await fetch(endpoint, {
+            signal: controller.signal,
+            headers: { "ngrok-skip-browser-warning": "true" },
+          });
+        } catch (initialErr: any) {
+          if (initialErr.name === "AbortError") throw initialErr;
+          if (
+            endpoint.startsWith("/api") &&
+            typeof window !== "undefined" &&
+            (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+          ) {
+            response = await fetch(`http://127.0.0.1:8000${endpoint}`, {
+              signal: controller.signal,
+              headers: { "ngrok-skip-browser-warning": "true" },
+            });
+          } else {
+            throw initialErr;
+          }
+        }
 
         // If configured external API failed (e.g. 404 or tunnel down), fallback to local /api rewrite proxy
         if (!response.ok && (endpoint.startsWith("http://") || endpoint.startsWith("https://"))) {
@@ -222,6 +250,22 @@ export default function Home() {
           });
           if (fallbackRes.ok) {
             response = fallbackRes;
+          }
+        }
+
+        // If relative rewrite proxy returned 500 or 502, try direct 127.0.0.1:8000
+        if (
+          !response.ok &&
+          endpoint.startsWith("/api") &&
+          typeof window !== "undefined" &&
+          (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+        ) {
+          const directRes = await fetch(`http://127.0.0.1:8000${endpoint}`, {
+            signal: controller.signal,
+            headers: { "ngrok-skip-browser-warning": "true" },
+          });
+          if (directRes.ok) {
+            response = directRes;
           }
         }
 

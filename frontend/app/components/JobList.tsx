@@ -102,7 +102,17 @@ export default function JobList({
             <div className="job-main-info">
               <div className="job-header-row">
                 <div className="job-title-group">
-                  <h2 className="job-title">{job.title}</h2>
+                  <h2 className="job-title">
+                    <a
+                      href={job.apply_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="job-title-link"
+                      title="Open official job listing"
+                    >
+                      {job.title}
+                    </a>
+                  </h2>
                   <div className="job-meta-row">
                     {job.company && <span className="job-company">{job.company}</span>}
                     {job.company && locationLabel && <span className="meta-separator">•</span>}
@@ -159,27 +169,26 @@ export default function JobList({
 
             <div className="job-actions">
               <a
-                href={job.ats_type === "Direct Portal" ? (job.career_url || job.apply_url) : job.apply_url}
+                href={job.apply_url}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn-apply"
-                onClick={() => onAction(job)}
                 title={
                   job.ats_type === "Direct Portal"
-                    ? `Open official ${job.company || "company"} career portal`
-                    : "Open employer application directly on ATS and mark as applied"
+                    ? "Open official job listing on company career portal"
+                    : `Open official job application on ${job.ats_type || "ATS"}`
                 }
               >
-                {job.ats_type === "Direct Portal" ? "Career Portal" : "Apply Direct"} <span aria-hidden="true">↗</span>
+                Apply Direct <span aria-hidden="true">↗</span>
               </a>
 
-              {job.career_url && job.ats_type !== "Direct Portal" && (
+              {job.career_url && job.career_url !== job.apply_url && (
                 <a
                   href={job.career_url}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="btn-career-portal"
-                  title={`Open official ${job.company || "company"} career page (browse all current openings if direct link is closed/404)`}
+                  title={`Open official ${job.company || "company"} career page (browse all current openings)`}
                 >
                   Career Page <span aria-hidden="true">↗</span>
                 </a>
@@ -189,7 +198,7 @@ export default function JobList({
                 className={`application-action ${applied ? "btn-applied" : "btn-mark"}`}
                 disabled={applied && disableAppliedAction}
                 onClick={() => onAction(job)}
-                title="Mark this role as applied and remove it from list"
+                title="Mark this role as applied and track it in Applied Tracker"
               >
                 {applied && disableAppliedAction ? "✓ Applied" : actionLabel}
               </button>
