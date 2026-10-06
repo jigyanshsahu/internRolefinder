@@ -17,6 +17,7 @@ from app.schemas import CompanySeedOut, JobOut, JobPageOut, SummaryOut
 from app.worker import celery_app, purge_stale_jobs
 from app.company_seeds import COMPANY_SEEDS
 from app.indian_jobs_data import INDIAN_COMPANIES_LIST, STARTUP_COMPANIES_LIST
+from app.mnc_jobs_data import MNC_COMPANIES_LIST
 
 settings = get_settings()
 
@@ -184,6 +185,8 @@ def jobs(
     sort_by: Literal["direct_portal", "india_first", "recent", "priority"] | None = "direct_portal",
     remote_only: bool = False,
     startups_only: bool = False,
+    india_only: bool = False,
+    mncs_only: bool = False,
     search: str | None = None,
     page: int = 1,
     page_size: int = 20,
@@ -200,6 +203,22 @@ def jobs(
 
     if isinstance(startups_only, bool) and startups_only:
         filters.append(Job.is_startup.is_(True))
+
+    if isinstance(india_only, bool) and india_only:
+        filters.append(
+            or_(
+                Job.country == "India",
+                func.lower(Job.company).in_(INDIAN_COMPANIES_LOWER),
+                and_(
+                    func.lower(Job.location).op("~*")(INDIAN_CITIES_PATTERN),
+                    func.lower(Job.location).not_ilike("%indianapolis%"),
+                ),
+            )
+        )
+
+    if isinstance(mncs_only, bool) and mncs_only:
+        mnc_lower = [m.lower() for m in MNC_COMPANIES_LIST]
+        filters.append(func.lower(Job.company).in_(mnc_lower))
 
     if isinstance(search, str) and search.strip():
         term = f"%{search.strip()}%"
@@ -317,6 +336,8 @@ def jobs(
 def summary(
     remote_only: bool = False,
     startups_only: bool = False,
+    india_only: bool = False,
+    mncs_only: bool = False,
     db: Session = Depends(get_db),
 ):
     cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.verification_max_age_hours)
@@ -325,6 +346,20 @@ def summary(
         filters.append(Job.is_remote.is_(True))
     if isinstance(startups_only, bool) and startups_only:
         filters.append(Job.is_startup.is_(True))
+    if isinstance(india_only, bool) and india_only:
+        filters.append(
+            or_(
+                Job.country == "India",
+                func.lower(Job.company).in_(INDIAN_COMPANIES_LOWER),
+                and_(
+                    func.lower(Job.location).op("~*")(INDIAN_CITIES_PATTERN),
+                    func.lower(Job.location).not_ilike("%indianapolis%"),
+                ),
+            )
+        )
+    if isinstance(mncs_only, bool) and mncs_only:
+        mnc_lower = [m.lower() for m in MNC_COMPANIES_LIST]
+        filters.append(func.lower(Job.company).in_(mnc_lower))
 
     rows = db.execute(select(Job.role_type, func.count(Job.id)).where(*filters).group_by(Job.role_type)).all()
     counts = {r.value: 0 for r in RoleType}
@@ -333,6 +368,28 @@ def summary(
     total_active = db.scalar(select(func.count(Job.id)).where(*filters)) or 0
     total_remote = db.scalar(select(func.count(Job.id)).where(Job.last_checked_at >= cutoff, Job.is_remote.is_(True))) or 0
     total_startups = db.scalar(select(func.count(Job.id)).where(Job.last_checked_at >= cutoff, Job.is_startup.is_(True))) or 0
+    total_india = db.scalar(
+        select(func.count(Job.id)).where(
+            Job.last_checked_at >= cutoff,
+            or_(Job.status == "active", Job.status.is_(None)),
+            or_(
+                Job.country == "India",
+                func.lower(Job.company).in_(INDIAN_COMPANIES_LOWER),
+                and_(
+                    func.lower(Job.location).op("~*")(INDIAN_CITIES_PATTERN),
+                    func.lower(Job.location).not_ilike("%indianapolis%"),
+                ),
+            ),
+        )
+    ) or 0
+    mnc_lower_all = [m.lower() for m in MNC_COMPANIES_LIST]
+    total_mncs = db.scalar(
+        select(func.count(Job.id)).where(
+            Job.last_checked_at >= cutoff,
+            or_(Job.status == "active", Job.status.is_(None)),
+            func.lower(Job.company).in_(mnc_lower_all)
+        )
+    ) or 0
 
     return SummaryOut(
         all=total_active,
@@ -342,6 +399,8 @@ def summary(
         full_stack=counts.get(RoleType.full_stack.value, 0),
         total_remote=total_remote,
         total_startups=total_startups,
+        total_india=total_india,
+        total_mncs=total_mncs,
     )
 
 

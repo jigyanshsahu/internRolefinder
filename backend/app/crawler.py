@@ -916,6 +916,94 @@ async def is_active(url: str) -> bool | None:
 
 VERIFIED_LISTINGS_URL = "https://raw.githubusercontent.com/SimplifyJobs/Summer2026-Internships/dev/.github/scripts/listings.json"
 
+# Hardcoded Indian company ATS boards that are reliably crawlable
+INDIAN_ATS_BOARDS: list[dict[str, str]] = [
+    # Lever boards
+    {"name": "FamPay", "platform": "lever", "slug": "fampay", "careers_url": "https://jobs.lever.co/fampay"},
+    {"name": "Merkle Science", "platform": "lever", "slug": "merklescience", "careers_url": "https://jobs.lever.co/merklescience"},
+    {"name": "Drivetrain", "platform": "lever", "slug": "drivetrain", "careers_url": "https://jobs.lever.co/drivetrain"},
+    {"name": "Auxia", "platform": "lever", "slug": "auxia", "careers_url": "https://jobs.lever.co/auxia"},
+    {"name": "Atlan", "platform": "lever", "slug": "atlanteam", "careers_url": "https://jobs.lever.co/atlanteam"},
+    {"name": "Chargebee", "platform": "lever", "slug": "chargebee", "careers_url": "https://jobs.lever.co/chargebee"},
+    {"name": "Appsmith", "platform": "lever", "slug": "appsmith", "careers_url": "https://jobs.lever.co/appsmith"},
+    {"name": "Sprinto", "platform": "lever", "slug": "Sprinto", "careers_url": "https://jobs.lever.co/Sprinto"},
+    {"name": "InVideo", "platform": "lever", "slug": "invideo", "careers_url": "https://jobs.lever.co/invideo"},
+    # Ashby boards
+    {"name": "Rivia.ai", "platform": "ashby", "slug": "rivia.ai", "careers_url": "https://jobs.ashbyhq.com/rivia.ai"},
+    {"name": "Unlearn AI", "platform": "ashby", "slug": "unlearn.ai", "careers_url": "https://jobs.ashbyhq.com/unlearn.ai"},
+    {"name": "SigNoz", "platform": "ashby", "slug": "SigNoz", "careers_url": "https://jobs.ashbyhq.com/SigNoz"},
+    {"name": "Novu", "platform": "ashby", "slug": "novu", "careers_url": "https://jobs.ashbyhq.com/novu"},
+    # Greenhouse boards
+    {"name": "CloudSEK", "platform": "greenhouse", "slug": "cloudsek", "careers_url": "https://job-boards.greenhouse.io/cloudsek"},
+    {"name": "Observe.AI", "platform": "greenhouse", "slug": "observeai", "careers_url": "https://job-boards.greenhouse.io/observeai"},
+    # Keka boards
+    {"name": "Zluri", "platform": "keka", "slug": "zluri", "careers_url": "https://zluri.keka.com/careers/"},
+    {"name": "Signzy", "platform": "keka", "slug": "signzy", "careers_url": "https://signzy.keka.com/careers"},
+    {"name": "Teachmint", "platform": "keka", "slug": "teachmint", "careers_url": "https://teachmint.keka.com/careers/"},
+    # Freshteam boards
+    {"name": "SpotDraft", "platform": "freshteam", "slug": "spotdraft", "careers_url": "https://spotdraft.freshteam.com/jobs"},
+    {"name": "Ninjacart", "platform": "freshteam", "slug": "ninjacart", "careers_url": "https://ninjacart.freshteam.com/jobs"},
+    {"name": "Pepper Content", "platform": "freshteam", "slug": "peppercontent-talent", "careers_url": "https://peppercontent-talent.freshteam.com/jobs"},
+    # Workable boards
+    {"name": "Entropik", "platform": "workable", "slug": "entropik", "careers_url": "https://apply.workable.com/entropik/"},
+    {"name": "HealthifyMe", "platform": "workable", "slug": "healthifyme", "careers_url": "https://apply.workable.com/healthifyme/"},
+    # Zoho Recruit boards
+    {"name": "Agnikul Cosmos", "platform": "zohorecruit", "slug": "agnikul|in", "careers_url": "https://agnikul.zohorecruit.in/jobs/Careers"},
+]
+
+
+async def discover_jobs_from_indian_boards() -> list[ExtractedJob]:
+    """Directly crawl hardcoded Indian company ATS boards for internship roles.
+    These are Indian tech companies with known ATS integrations (Lever, Ashby, Greenhouse, Keka etc.).
+    """
+    headers = {"User-Agent": "InternRoleFinderBot/1.0 (+india-intern-indexer)"}
+    async with httpx.AsyncClient(timeout=25, follow_redirects=True, headers=headers) as client:
+        semaphore = asyncio.Semaphore(6)
+
+        async def fetch_board(board: dict) -> list[ExtractedJob]:
+            async with semaphore:
+                platform = board["platform"]
+                slug = board["slug"]
+                company = board["name"]
+                try:
+                    if platform == "schema":
+                        return await _fetch_schema_board(client, board)
+                    source_url = _board_url(platform, slug)
+                    response = await client.get(source_url)
+                    if response.status_code != 200:
+                        return []
+                    return _normalize_board_jobs(company, platform, slug, source_url, response.json())
+                except (httpx.HTTPError, ValueError):
+                    return []
+
+        results = await asyncio.gather(*(fetch_board(b) for b in INDIAN_ATS_BOARDS))
+
+    jobs: dict[str, ExtractedJob] = {}
+    for batch in results:
+        for job in batch:
+            # Mark all jobs from Indian boards as India-located if no location is set
+            if job.country is None and not job.is_remote:
+                job = ExtractedJob(
+                    title=job.title,
+                    company=job.company,
+                    location=job.location or "India",
+                    country="India",
+                    is_remote=job.is_remote,
+                    role_type=job.role_type,
+                    apply_url=job.apply_url,
+                    source_url=job.source_url,
+                    description=job.description,
+                    posted_at=job.posted_at,
+                    is_startup=True,
+                    source=job.source,
+                    source_job_id=job.source_job_id,
+                    job_url=job.job_url,
+                    final_url=job.final_url,
+                    original_url=job.original_url,
+                )
+            jobs.setdefault(job.apply_url, job)
+    return list(jobs.values())
+
 
 async def discover_jobs_from_verified_listings(limit: int = 1500) -> list[ExtractedJob]:
     """Fetch active software internships from verified direct employer links."""

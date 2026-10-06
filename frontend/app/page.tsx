@@ -32,7 +32,9 @@ type SummaryResponse = {
   full_stack: number;
   total_remote: number;
   total_startups: number;
+  total_india: number;
 };
+
 
 const CATEGORIES: { key: RoleFilter; label: string }[] = [
   { key: "all", label: "All Roles" },
@@ -58,7 +60,10 @@ export default function Home() {
   const [sortBy, setSortBy] = useState<SortOption>("direct_portal");
   const [remoteOnly, setRemoteOnly] = useState<boolean>(false);
   const [startupsOnly, setStartupsOnly] = useState<boolean>(false);
+  const [indiaOnly, setIndiaOnly] = useState<boolean>(false);
+  const [mncsOnly, setMncsOnly] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
+
   const [debouncedSearch, setDebouncedSearch] = useState<string>("");
 
   const [page, setPage] = useState(1);
@@ -103,6 +108,8 @@ export default function Home() {
       page_size: String(jobsPerPage),
       remote_only: String(remoteOnly),
       startups_only: String(startupsOnly),
+      india_only: String(indiaOnly),
+      mncs_only: String(mncsOnly),
       sort_by: sortBy,
     });
     if (role !== "all") {
@@ -113,7 +120,8 @@ export default function Home() {
     }
     const base = getApiUrl();
     return `${base}/api/jobs?${params.toString()}`;
-  }, [page, role, sortBy, remoteOnly, startupsOnly, debouncedSearch]);
+  }, [page, role, sortBy, remoteOnly, startupsOnly, indiaOnly, mncsOnly, debouncedSearch]);
+
 
   // Sync initial state from URL query
   useEffect(() => {
@@ -124,6 +132,8 @@ export default function Home() {
       const querySort = params.get("sort_by") as SortOption | null;
       const queryRemote = params.get("remote_only");
       const queryStartups = params.get("startups_only");
+      const queryIndia = params.get("india_only");
+      const queryMncs = params.get("mncs_only");
       const querySearch = params.get("search");
 
       setPage(Number.isInteger(queryPage) && queryPage > 0 ? queryPage : 1);
@@ -142,6 +152,8 @@ export default function Home() {
       }
       setRemoteOnly(queryRemote === "true");
       setStartupsOnly(queryStartups === "true");
+      setIndiaOnly(queryIndia === "true");
+      setMncsOnly(queryMncs === "true");
       if (querySearch) {
         setSearchQuery(querySearch);
         setDebouncedSearch(querySearch);
@@ -177,7 +189,8 @@ export default function Home() {
   // Fetch summary counts for tabs
   useEffect(() => {
     const base = getApiUrl();
-    const query = `remote_only=${remoteOnly}&startups_only=${startupsOnly}`;
+    const query = `remote_only=${remoteOnly}&startups_only=${startupsOnly}&india_only=${indiaOnly}&mncs_only=${mncsOnly}`;
+
     const primaryUrl = `${base}/api/jobs/summary?${query}`;
     const fallbackUrl = `/api/jobs/summary?${query}`;
     const directUrl = `http://127.0.0.1:8000/api/jobs/summary?${query}`;
@@ -335,6 +348,20 @@ export default function Home() {
       params.delete("startups_only");
     }
 
+    const nextIndia =
+      overrides.indiaOnly !== undefined ? Boolean(overrides.indiaOnly) : indiaOnly;
+    if (nextIndia) {
+      params.set("india_only", "true");
+    } else {
+      params.delete("india_only");
+    }
+
+    if (current.mncsOnly) {
+      params.set("mncs_only", "true");
+    } else {
+      params.delete("mncs_only");
+    }
+
     const nextSearch =
       overrides.search !== undefined ? String(overrides.search) : debouncedSearch;
     if (nextSearch && nextSearch.trim()) {
@@ -370,11 +397,25 @@ export default function Home() {
     pushUrlState({ startupsOnly: isStartups, page: 1 });
   };
 
+  const handleIndiaToggle = (isIndia: boolean) => {
+    setIndiaOnly(isIndia);
+    setPage(1);
+    pushUrlState({ indiaOnly: isIndia, page: 1 });
+  };
+
+  const handleMncsToggle = (isMncs: boolean) => {
+    setMncsOnly(isMncs);
+    setPage(1);
+    pushUrlState({ mncsOnly: isMncs, page: 1 });
+  };
+
   const resetAllFilters = () => {
     setRole("all");
     setSortBy("direct_portal");
     setRemoteOnly(false);
     setStartupsOnly(false);
+    setIndiaOnly(false);
+    setMncsOnly(false);
     setSearchQuery("");
     setDebouncedSearch("");
     setPage(1);
@@ -383,10 +424,13 @@ export default function Home() {
       sortBy: "direct_portal",
       remoteOnly: false,
       startupsOnly: false,
+      indiaOnly: false,
+      mncsOnly: false,
       search: "",
       page: 1,
     });
   };
+
 
   const markApplied = (job: Job) => {
     addAppliedJob(job);
@@ -443,7 +487,9 @@ export default function Home() {
     sortBy !== "direct_portal" ||
     remoteOnly ||
     startupsOnly ||
+    indiaOnly ||
     debouncedSearch.trim() !== "";
+
 
   return (
     <main>
@@ -480,15 +526,8 @@ export default function Home() {
         </Link>
       </div>
 
-      {/* Startup Advantage Callout */}
-      <div className="startup-tip-banner">
-        <div className="startup-tip-content">
-          <span className="startup-tip-icon" aria-hidden="true">💡</span>
-          <div>
-            <strong>Why apply to high-growth startups?</strong> Fast-moving tech startups have a <strong>10x–50x higher interview response rate</strong> than legacy MNC black holes because engineering leads directly review your GitHub, projects, and resume.
-          </div>
-        </div>
-      </div>
+      {/* Startup Advantage Callout - removed clutter */}
+
 
       {/* Live Search Bar */}
       <div className="search-section">
@@ -542,6 +581,34 @@ export default function Home() {
           <div className="control-group secondary-toggles">
             <span className="filter-label">Opportunity Filter:</span>
             <div className="btn-toggle-group" role="group" aria-label="Startups and workplace filter">
+              <button
+                type="button"
+                className={`filter-btn india-filter-btn ${indiaOnly ? "selected is-india-only-active" : ""}`}
+                onClick={() => handleIndiaToggle(!indiaOnly)}
+                title="Only show jobs from Indian companies or India-based locations"
+              >
+                <span>🇮🇳 India Only</span>
+                {summary && (
+                  <span className="cat-count-pill india-count-pill">
+                    {summary.total_india}
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                className={`filter-btn mnc-filter-btn ${mncsOnly ? "selected is-mnc-active" : ""}`}
+                onClick={() => handleMncsToggle(!mncsOnly)}
+                title="Only show top multinational corporations (MNCs)"
+              >
+                <span>🏢 MNCs Only</span>
+                {summary && (
+                  <span className="cat-count-pill mnc-count-pill">
+                    {(summary as any).total_mncs || 0}
+                  </span>
+                )}
+              </button>
+
               <button
                 type="button"
                 className={`filter-btn startup-filter-btn ${startupsOnly ? "selected is-startup-active" : ""}`}
@@ -601,7 +668,7 @@ export default function Home() {
           </div>
         </div>
 
-        {hasActiveFilters && (
+        {(role !== "all" || sortBy !== "direct_portal" || remoteOnly || startupsOnly || indiaOnly || mncsOnly || debouncedSearch) && (
           <div className="active-filter-bar">
             <span className="active-filters-label">Active Filters:</span>
             {role !== "all" && (
@@ -615,7 +682,10 @@ export default function Home() {
               </span>
             )}
             {startupsOnly && <span className="filter-tag tag-startup">🚀 Startups Only</span>}
+            {indiaOnly && <span className="filter-tag tag-india">🇮🇳 India Only</span>}
+            {mncsOnly && <span className="filter-tag tag-mnc">🏢 MNCs Only</span>}
             {remoteOnly && <span className="filter-tag tag-remote">🌐 Remote Only</span>}
+
             {debouncedSearch && (
               <span className="filter-tag tag-search">"{debouncedSearch}"</span>
             )}
@@ -671,7 +741,9 @@ export default function Home() {
                 <span className="meta-applied-note"> ({appliedIds.size} applied removed)</span>
               )}
               {startupsOnly ? " (Startups Only)" : ""}
+              {indiaOnly ? " (India Only)" : ""}
               {remoteOnly ? " (Remote Only)" : ""}
+
               {debouncedSearch ? ` for "${debouncedSearch}"` : ""}
             </span>
             <span className="ats-direct-hint">

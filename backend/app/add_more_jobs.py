@@ -18,6 +18,7 @@ from app.config import get_settings
 from app.crawler import (
     ExtractedJob,
     canonical_url,
+    discover_jobs_from_indian_boards,
     discover_jobs_from_public_ats,
     discover_jobs_from_verified_listings,
     get_ats_name,
@@ -26,6 +27,7 @@ from app.crawler import (
 from app.database import SessionLocal
 from app.models import Job, StartupBoard
 from app.services.job_validator import is_generic_careers_url, validate_job_url
+from app.mnc_jobs_data import MNC_COMPANIES_LIST
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("add_more_jobs")
@@ -162,7 +164,11 @@ async def run_add_more_jobs(concurrency: int = 15):
         speedy_candidates = await fetch_speedyapply_candidates()
         print(f" -> Gathered {len(speedy_candidates)} software intern roles from SpeedyApply.")
 
-        all_candidates = simplify_candidates + resumax_candidates + speedy_candidates
+        # 4. Indian ATS boards
+        indian_candidates = await discover_jobs_from_indian_boards()
+        print(f" -> Gathered {len(indian_candidates)} software intern roles from Indian Boards.")
+
+        all_candidates = simplify_candidates + resumax_candidates + speedy_candidates + indian_candidates
         print(f"Total raw candidates collected: {len(all_candidates)}")
 
         # Step 2: Strictly filter candidates
@@ -247,7 +253,12 @@ async def run_add_more_jobs(concurrency: int = 15):
         # Step 4: Insert validated jobs into the database
         print("\nStep 3: Storing validated jobs in database...")
         rows_by_final_url = {}
+        mnc_set = {m.lower() for m in MNC_COMPANIES_LIST}
         for candidate, res in validated_jobs:
+            company_lower = (candidate.company or "").lower()
+            is_mnc = any(m in company_lower for m in mnc_set)
+            if candidate.country != "India" and not candidate.is_remote and not is_mnc:
+                continue
             final_url = canonical_url(res.final_url)
             if final_url in existing_urls:
                 continue

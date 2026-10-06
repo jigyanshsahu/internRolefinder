@@ -892,6 +892,38 @@ main {
   color: #6ee7b7;
 }
 
+/* India Only Filter Button */
+.india-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.india-filter-btn.is-india-only-active {
+  background: linear-gradient(135deg, rgba(255, 153, 51, 0.35), rgba(19, 136, 8, 0.3)) !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 153, 51, 0.65) !important;
+  box-shadow: 0 0 16px rgba(255, 153, 51, 0.3);
+}
+
+.india-count-pill {
+  background: rgba(255, 153, 51, 0.28);
+  color: #fcd9a0;
+  font-weight: 800;
+}
+
+.india-filter-btn.is-india-only-active .india-count-pill {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+.filter-tag.tag-india {
+  background: rgba(255, 153, 51, 0.18);
+  border-color: rgba(255, 153, 51, 0.45);
+  color: #fdba74;
+}
+
+
 .btn-clear-all {
   background: none;
   border: none;

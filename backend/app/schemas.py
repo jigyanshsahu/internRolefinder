@@ -38,6 +38,8 @@ class SummaryOut(BaseModel):
     full_stack: int = 0
     total_remote: int = 0
     total_startups: int = 0
+    total_india: int = 0
+    total_mncs: int = 0
 
 
 class JobPageOut(BaseModel):
