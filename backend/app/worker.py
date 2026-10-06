@@ -9,6 +9,7 @@ from app.crawler import (
     canonical_url,
     discover_company_boards,
     discover_indian_startup_boards,
+    discover_jobs_from_indian_boards,
     discover_jobs_from_public_ats,
     discover_jobs_from_verified_listings,
     get_ats_name,
@@ -18,6 +19,7 @@ from app.crawler import (
 from app.services.job_validator import is_generic_careers_url, validate_job_url
 from app.database import SessionLocal
 from app.models import CompanySeed, Job, StartupBoard
+from app.mnc_jobs_data import MNC_COMPANIES_LIST
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -43,7 +45,12 @@ def purge_stale_jobs(db, cutoff: datetime) -> int:
 
 def _upsert_discovered_jobs(db, discovered_jobs) -> int:
     rows_by_url = {}
+    mnc_set = {m.lower() for m in MNC_COMPANIES_LIST}
     for job in discovered_jobs:
+        company_lower = (job.company or "").lower()
+        is_mnc = any(m in company_lower for m in mnc_set)
+        if job.country != "India" and not job.is_remote and not is_mnc:
+            continue
         apply_url = canonical_url(job.apply_url)
         rows_by_url.setdefault(apply_url, {
             "title": job.title,
@@ -103,9 +110,10 @@ def discover_jobs() -> int:
             for board in db.scalars(select(StartupBoard)).all()
         ]
         public_jobs = asyncio.run(discover_jobs_from_public_ats(startup_boards))
+        indian_jobs = asyncio.run(discover_jobs_from_indian_boards())
         verified_jobs = asyncio.run(discover_jobs_from_verified_listings(limit=1500))
         valid_discovered = [
-            j for j in (public_jobs + verified_jobs)
+            j for j in (public_jobs + indian_jobs + verified_jobs)
             if not is_generic_careers_url(j.apply_url)[0]
         ]
         validated_jobs = asyncio.run(validate_candidate_jobs(valid_discovered))

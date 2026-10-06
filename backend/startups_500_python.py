@@ -1,6 +1,3 @@
-"""Verified Indian tech companies and startups list for company classification and prioritization.
-"""
-
 INDIAN_COMPANIES_LIST = [
     "1mg",
     "Acko",
@@ -502,13 +499,4 @@ INDIAN_COMPANIES_LIST = [
     "Zoho",
     "Zomato",
     "Zomentum",
-]
-
-
-
-STARTUP_COMPANIES_LIST = INDIAN_COMPANIES_LIST + [
-    "Supabase", "Vercel", "Resend", "Railway", "PostHog", "Modal", "Cal.com", "Linear",
-    "LiveKit", "Loops", "Raycast", "Mintlify", "LangChain", "Dub.co", "Inngest", "Convex",
-    "Neon", "Trigger.dev", "Warp", "Prisma", "Retool", "Brex", "Ramp", "Exa Labs",
-    "Dryft", "Serval", "Bree", "Neuralink", "Datadog",
 ]
